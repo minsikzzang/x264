@@ -270,7 +270,6 @@ cglobal x264_dequant_%2x%2_%1, 0,3
 .rshift32:
     neg   t0d
     movd  m5, t0d
-    picgetgot t0d
     mova  m6, [pd_1 GLOBAL]
     pxor  m7, m7
     pslld m6, m5
@@ -290,12 +289,11 @@ cglobal x264_dequant_%2x%2_flat16_%1, 0,3
     sub  t2d, t1d
     sub  t2d, t1d   ; i_mf = i_qp % 6
     shl  t2d, %3
-%ifdef PIC64
+%ifdef PIC
     lea  r1, [dequant%2_scale GLOBAL]
     add  r1, t2
 %else
-    picgetgot r0
-    lea  r1, [t2 + dequant%2_scale GLOBAL]
+    lea  r1, [dequant%2_scale + t2 GLOBAL]
 %endif
     movifnidn r0d, r0m
     movd m7, t0d
@@ -331,10 +329,10 @@ DEQUANT sse2, 8, 6, 2
 
 
 ;-----------------------------------------------------------------------------
-; void x264_denoise_dct_core_mmx( int16_t *dct, uint32_t *sum, uint16_t *offset, int size )
+; void x264_denoise_dct_mmx( int16_t *dct, uint32_t *sum, uint16_t *offset, int size )
 ;-----------------------------------------------------------------------------
 %macro DENOISE_DCT 1
-cglobal x264_denoise_dct_core_%1, 4,5
+cglobal x264_denoise_dct_%1, 4,5
     movzx     r4d, word [r0] ; backup DC coefficient
     pxor      m7, m7
 .loop:

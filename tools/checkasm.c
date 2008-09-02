@@ -100,12 +100,12 @@ static bench_t* get_bench( const char *name, int cpu )
     return &benchs[i].vers[j];
 }
 
-int cmp_nop( const void *a, const void *b )
+static int cmp_nop( const void *a, const void *b )
 {
     return *(uint16_t*)a - *(uint16_t*)b;
 }
 
-int cmp_bench( const void *a, const void *b )
+static int cmp_bench( const void *a, const void *b )
 {
     // asciibetical sort except preserving numbers
     const char *sa = ((bench_func_t*)a)->name;
@@ -301,6 +301,27 @@ static int check_pixel( int cpu_ref, int cpu_new )
 
     TEST_PIXEL_X(3);
     TEST_PIXEL_X(4);
+
+#define TEST_PIXEL_VAR( i ) \
+    if( pixel_asm.var[i] != pixel_ref.var[i] ) \
+    { \
+        uint32_t res_c, res_asm; \
+        uint32_t sad_c, sad_asm; \
+        set_func_name( "%s_%s", "var", pixel_names[i] ); \
+        used_asm = 1; \
+        res_c   = call_c( pixel_c.var[i], buf1, 16, &sad_c ); \
+        res_asm = call_a( pixel_asm.var[i], buf1, 16, &sad_asm ); \
+        if( (res_c != res_asm) || (sad_c != sad_asm) ) \
+        { \
+            ok = 0; \
+            fprintf( stderr, "var[%d]: %d,%d != %d,%d [FAILED]\n", i, res_c, sad_c, res_asm, sad_asm ); \
+        } \
+    }
+
+    ok = 1; used_asm = 0;
+    TEST_PIXEL_VAR( PIXEL_16x16 );
+    TEST_PIXEL_VAR( PIXEL_8x8 );
+    report( "pixel var :" );
 
 #define TEST_INTRA_SATD( name, pred, satd, i8x8, ... ) \
     if( pixel_asm.name && pixel_asm.name != pixel_ref.name ) \
@@ -568,6 +589,7 @@ static int check_dct( int cpu_ref, int cpu_new )
     { \
         set_func_name( "zigzag_"#name"_%s", interlace?"field":"frame" );\
         used_asm = 1; \
+        memcpy(dct, buf1, size*sizeof(int16_t));\
         call_c( zigzag_c.name, t1, dct ); \
         call_a( zigzag_asm.name, t2, dct ); \
         if( memcmp( t1, t2, size*sizeof(int16_t) ) ) \
@@ -1048,7 +1070,7 @@ static int check_quant( int cpu_ref, int cpu_new )
     report( "dequant :" );
 
 
-    if( qf_a.denoise_dct_core != qf_ref.denoise_dct_core )
+    if( qf_a.denoise_dct != qf_ref.denoise_dct )
     {
         int size;
         for( size = 16; size <= 64; size += 48 )
@@ -1058,12 +1080,12 @@ static int check_quant( int cpu_ref, int cpu_new )
             memcpy(dct1, buf1, size*2);
             memcpy(dct2, buf1, size*2);
             memcpy(buf3+256, buf3, 256);
-            call_c1( qf_c.denoise_dct_core, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
-            call_a1( qf_a.denoise_dct_core, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
+            call_c1( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
+            call_a1( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
             if( memcmp( dct1, dct2, size*2 ) || memcmp( buf3+4, buf3+256+4, (size-1)*sizeof(uint32_t) ) )
                 ok = 0;
-            call_c2( qf_c.denoise_dct_core, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
-            call_a2( qf_a.denoise_dct_core, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
+            call_c2( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
+            call_a2( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
         }
     }
     report( "denoise dct :" );
@@ -1178,7 +1200,7 @@ static int check_cabac( int cpu_ref, int cpu_new )
     return ret;
 }
 
-int check_all_funcs( int cpu_ref, int cpu_new )
+static int check_all_funcs( int cpu_ref, int cpu_new )
 {
     return check_pixel( cpu_ref, cpu_new )
          + check_dct( cpu_ref, cpu_new )
@@ -1189,7 +1211,7 @@ int check_all_funcs( int cpu_ref, int cpu_new )
          + check_cabac( cpu_ref, cpu_new );
 }
 
-int add_flags( int *cpu_ref, int *cpu_new, int flags, const char *name )
+static int add_flags( int *cpu_ref, int *cpu_new, int flags, const char *name )
 {
     *cpu_ref = *cpu_new;
     *cpu_new |= flags;
@@ -1200,7 +1222,7 @@ int add_flags( int *cpu_ref, int *cpu_new, int flags, const char *name )
     return check_all_funcs( *cpu_ref, *cpu_new );
 }
 
-int check_all_flags( void )
+static int check_all_flags( void )
 {
     int ret = 0;
     int cpu0 = 0, cpu1 = 0;

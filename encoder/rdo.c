@@ -34,7 +34,7 @@ static uint16_t cabac_prefix_size[15][128];
 #define bs_write_ue(s,v)   ((s)->i_bits_encoded += bs_size_ue(v))
 #define bs_write_se(s,v)   ((s)->i_bits_encoded += bs_size_se(v))
 #define bs_write_te(s,v,l) ((s)->i_bits_encoded += bs_size_te(v,l))
-#define x264_macroblock_write_cavlc  x264_macroblock_size_cavlc
+#define x264_macroblock_write_cavlc  static x264_macroblock_size_cavlc
 #include "cavlc.c"
 
 /* CABAC: not exactly the same. x264_cabac_size_decision() keeps track of
@@ -45,12 +45,12 @@ static uint16_t cabac_prefix_size[15][128];
 #define x264_cabac_encode_bypass(c,v)     ((c)->f8_bits_encoded += 256)
 #define x264_cabac_encode_ue_bypass(c,e,v) ((c)->f8_bits_encoded += (bs_size_ue_big(v+(1<<e)-1)-e)<<8)
 #define x264_cabac_encode_flush(h,c)
-#define x264_macroblock_write_cabac  x264_macroblock_size_cabac
+#define x264_macroblock_write_cabac  static x264_macroblock_size_cabac
 #include "cabac.c"
 
 #define COPY_CABAC h->mc.memcpy_aligned( &cabac_tmp.f8_bits_encoded, &h->cabac.f8_bits_encoded, \
         sizeof(x264_cabac_t) - offsetof(x264_cabac_t,f8_bits_encoded) )
-    
+
 static int ssd_mb( x264_t *h )
 {
     return h->pixf.ssd[PIXEL_16x16]( h->mb.pic.p_fenc[0], FENC_STRIDE,
@@ -101,9 +101,11 @@ static int x264_rd_cost_mb( x264_t *h, int i_lambda2 )
     return i_ssd + i_bits;
 }
 
-int x264_rd_cost_part( x264_t *h, int i_lambda2, int i8, int i_pixel )
+/* subpartition RD functions use 8 bits more precision to avoid large rounding errors at low QPs */
+
+uint64_t x264_rd_cost_part( x264_t *h, int i_lambda2, int i8, int i_pixel )
 {
-    int i_ssd, i_bits;
+    uint64_t i_ssd, i_bits;
 
     if( i_pixel == PIXEL_16x16 )
     {
@@ -128,19 +130,19 @@ int x264_rd_cost_part( x264_t *h, int i_lambda2, int i8, int i_pixel )
         x264_cabac_t cabac_tmp;
         COPY_CABAC;
         x264_partition_size_cabac( h, &cabac_tmp, i8, i_pixel );
-        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 32768 ) >> 16;
+        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 128 ) >> 8;
     }
     else
     {
-        i_bits = ( x264_partition_size_cavlc( h, i8, i_pixel ) * i_lambda2 + 128 ) >> 8;
+        i_bits = x264_partition_size_cavlc( h, i8, i_pixel ) * i_lambda2;
     }
 
-    return i_ssd + i_bits;
+    return (i_ssd<<8) + i_bits;
 }
 
-int x264_rd_cost_i8x8( x264_t *h, int i_lambda2, int i8, int i_mode )
+static uint64_t x264_rd_cost_i8x8( x264_t *h, int i_lambda2, int i8, int i_mode )
 {
-    int i_ssd, i_bits;
+    uint64_t i_ssd, i_bits;
 
     x264_mb_encode_i8x8( h, i8, h->mb.i_qp );
     i_ssd = ssd_plane( h, PIXEL_8x8, 0, (i8&1)*8, (i8>>1)*8 );
@@ -150,19 +152,19 @@ int x264_rd_cost_i8x8( x264_t *h, int i_lambda2, int i8, int i_mode )
         x264_cabac_t cabac_tmp;
         COPY_CABAC;
         x264_partition_i8x8_size_cabac( h, &cabac_tmp, i8, i_mode );
-        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 32768 ) >> 16;
+        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 128 ) >> 8;
     }
     else
     {
-        i_bits = ( x264_partition_i8x8_size_cavlc( h, i8, i_mode ) * i_lambda2 + 128 ) >> 8;
+        i_bits = x264_partition_i8x8_size_cavlc( h, i8, i_mode ) * i_lambda2;
     }
 
-    return i_ssd + i_bits;
+    return (i_ssd<<8) + i_bits;
 }
 
-int x264_rd_cost_i4x4( x264_t *h, int i_lambda2, int i4, int i_mode )
+static uint64_t x264_rd_cost_i4x4( x264_t *h, int i_lambda2, int i4, int i_mode )
 {
-    int i_ssd, i_bits;
+    uint64_t i_ssd, i_bits;
 
     x264_mb_encode_i4x4( h, i4, h->mb.i_qp );
     i_ssd = ssd_plane( h, PIXEL_4x4, 0, block_idx_x[i4]*4, block_idx_y[i4]*4 );
@@ -172,19 +174,19 @@ int x264_rd_cost_i4x4( x264_t *h, int i_lambda2, int i4, int i_mode )
         x264_cabac_t cabac_tmp;
         COPY_CABAC;
         x264_partition_i4x4_size_cabac( h, &cabac_tmp, i4, i_mode );
-        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 32768 ) >> 16;
+        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 128 ) >> 8;
     }
     else
     {
-        i_bits = ( x264_partition_i4x4_size_cavlc( h, i4, i_mode ) * i_lambda2 + 128 ) >> 8;
+        i_bits = x264_partition_i4x4_size_cavlc( h, i4, i_mode ) * i_lambda2;
     }
 
-    return i_ssd + i_bits;
+    return (i_ssd<<8) + i_bits;
 }
 
-int x264_rd_cost_i8x8_chroma( x264_t *h, int i_lambda2, int i_mode, int b_dct )
+static uint64_t x264_rd_cost_i8x8_chroma( x264_t *h, int i_lambda2, int i_mode, int b_dct )
 {
-    int i_ssd, i_bits;
+    uint64_t i_ssd, i_bits;
 
     if( b_dct )
         x264_mb_encode_8x8_chroma( h, 0, h->mb.i_chroma_qp );
@@ -198,14 +200,14 @@ int x264_rd_cost_i8x8_chroma( x264_t *h, int i_lambda2, int i_mode, int b_dct )
         x264_cabac_t cabac_tmp;
         COPY_CABAC;
         x264_i8x8_chroma_size_cabac( h, &cabac_tmp );
-        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 32768 ) >> 16;
+        i_bits = ( (uint64_t)cabac_tmp.f8_bits_encoded * i_lambda2 + 128 ) >> 8;
     }
     else
     {
-        i_bits = ( x264_i8x8_chroma_size_cavlc( h ) * i_lambda2 + 128 ) >> 8;
+        i_bits = x264_i8x8_chroma_size_cavlc( h ) * i_lambda2;
     }
 
-    return i_ssd + i_bits;
+    return (i_ssd<<8) + i_bits;
 }
 /****************************************************************************
  * Trellis RD quantization
@@ -217,7 +219,7 @@ int x264_rd_cost_i8x8_chroma( x264_t *h, int i_lambda2, int i_mode, int b_dct )
 #define LAMBDA_BITS 4
 
 /* precalculate the cost of coding abs_level_m1 */
-void x264_rdo_init( )
+void x264_rdo_init( void )
 {
     int i_prefix;
     int i_ctx;
@@ -245,24 +247,24 @@ void x264_rdo_init( )
 // I'm just matching the behaviour of deadzone quant.
 static const int lambda2_tab[2][52] = {
     // inter lambda = .85 * .85 * 2**(qp/3. + 10 - LAMBDA_BITS)
-    {    46,      58,      73,      92,     117,     147, 
-        185,     233,     294,     370,     466,     587, 
-        740,     932,    1174,    1480,    1864,    2349, 
-       2959,    3728,    4697,    5918,    7457,    9395, 
-      11837,   14914,   18790,   23674,   29828,   37581, 
-      47349,   59656,   75163,   94699,  119313,  150326, 
-     189399,  238627,  300652,  378798,  477255,  601304, 
-     757596,  954511, 1202608, 1515192, 1909022, 2405217, 
+    {    46,      58,      73,      92,     117,     147,
+        185,     233,     294,     370,     466,     587,
+        740,     932,    1174,    1480,    1864,    2349,
+       2959,    3728,    4697,    5918,    7457,    9395,
+      11837,   14914,   18790,   23674,   29828,   37581,
+      47349,   59656,   75163,   94699,  119313,  150326,
+     189399,  238627,  300652,  378798,  477255,  601304,
+     757596,  954511, 1202608, 1515192, 1909022, 2405217,
     3030384, 3818045, 4810435, 6060769 },
     // intra lambda = .65 * .65 * 2**(qp/3. + 10 - LAMBDA_BITS)
-    {    27,      34,      43,      54,      68,      86, 
-        108,     136,     172,     216,     273,     343, 
-        433,     545,     687,     865,    1090,    1374, 
-       1731,    2180,    2747,    3461,    4361,    5494, 
-       6922,    8721,   10988,   13844,   17442,   21976, 
-      27688,   34885,   43953,   55377,   69771,   87906, 
-     110755,  139543,  175813,  221511,  279087,  351627, 
-     443023,  558174,  703255,  886046, 1116348, 1406511, 
+    {    27,      34,      43,      54,      68,      86,
+        108,     136,     172,     216,     273,     343,
+        433,     545,     687,     865,    1090,    1374,
+       1731,    2180,    2747,    3461,    4361,    5494,
+       6922,    8721,   10988,   13844,   17442,   21976,
+      27688,   34885,   43953,   55377,   69771,   87906,
+     110755,  139543,  175813,  221511,  279087,  351627,
+     443023,  558174,  703255,  886046, 1116348, 1406511,
     1772093, 2232697, 2813022, 3544186 }
 };
 

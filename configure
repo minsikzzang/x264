@@ -258,7 +258,7 @@ case $host_cpu in
     ARCH="X86_64"
     AS="yasm"
     if [ "$SYS" = MACOSX ];then
-      ASFLAGS="-f macho64 -m amd64 -D__PIC__ -DPREFIX"
+      ASFLAGS="-f macho64 -m amd64 -DPIC -DPREFIX"
       CFLAGS="$CFLAGS -arch x86_64"
       LDFLAGS="$LDFLAGS -arch x86_64"
     else
@@ -390,7 +390,7 @@ fi
 
 if [ "$pic" = "yes" ] ; then
     CFLAGS="$CFLAGS -fPIC"
-    ASFLAGS="$ASFLAGS -D__PIC__"
+    ASFLAGS="$ASFLAGS -DPIC"
     # resolve textrels in the x86 asm
     cc_check stdio.h -Wl,-Bsymbolic && LDFLAGS="$LDFLAGS -Wl,-Bsymbolic"
 fi
@@ -455,15 +455,25 @@ if [ "$shared" = "yes" ]; then
         echo 'IMPLIBNAME=libx264.dll.a' >> config.mak
         echo 'SOFLAGS=-Wl,--out-implib,$(IMPLIBNAME) -Wl,--enable-auto-image-base' >> config.mak
     elif [ "$SYS" = "MACOSX" ]; then
+        echo "SOSUFFIX=dylib" >> config.mak
         echo "SONAME=libx264.$API.dylib" >> config.mak
-        echo 'SOFLAGS=-dynamiclib -Wl,-single_module -Wl,-read_only_relocs,suppress' >> config.mak        
+        echo 'SOFLAGS=-dynamiclib -Wl,-single_module -Wl,-read_only_relocs,suppress -install_name $(DESTDIR)$(libdir)/$(SONAME)' >> config.mak
     else
+        echo "SOSUFFIX=so" >> config.mak
         echo "SONAME=libx264.so.$API" >> config.mak
         echo 'SOFLAGS=-Wl,-soname,$(SONAME)' >> config.mak
     fi
     echo 'default: $(SONAME)' >> config.mak
     if [ "$gtk" = "yes" ]; then
-        echo "SONAMEGTK=libx264gtk.so.$API" >> gtk/config.mak
+        if [ "$SYS" = "MACOSX" ]; then
+            echo "SOSUFFIX=dylib" >> gtk/config.mak
+            echo "SONAMEGTK=libx264gtk.$API.dylib" >> gtk/config.mak
+            echo 'SOFLAGS=-dynamiclib -Wl,-single_module -Wl,-read_only_relocs,suppress -install_name $(DESTDIR)$(libdir)/$(SONAMEGTK)' >> gtk/config.mak
+        else
+            echo "SOSUFFIX=so" >> gtk/config.mak
+            echo "SONAMEGTK=libx264gtk.so.$API" >> gtk/config.mak
+            echo 'SOFLAGS=-Wl,-soname,$(SONAMEGTK)' >> gtk/config.mak
+        fi
     fi
 fi
 

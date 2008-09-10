@@ -641,7 +641,6 @@ int x264_nal_encode( void *p_data, int *pi_data, int b_annexeb, x264_nal_t *nal 
     uint8_t *dst = p_data;
     uint8_t *src = nal->p_payload;
     uint8_t *end = &nal->p_payload[nal->i_payload];
-
     int i_count = 0;
 
     /* FIXME this code doesn't check overflow */
@@ -666,49 +665,14 @@ int x264_nal_encode( void *p_data, int *pi_data, int b_annexeb, x264_nal_t *nal 
             i_count = 0;
         }
         if( *src == 0 )
-        {
             i_count++;
-        }
         else
-        {
             i_count = 0;
-        }
         *dst++ = *src++;
     }
     *pi_data = dst - (uint8_t*)p_data;
 
     return *pi_data;
-}
-
-/****************************************************************************
- * x264_nal_decode:
- ****************************************************************************/
-int x264_nal_decode( x264_nal_t *nal, void *p_data, int i_data )
-{
-    uint8_t *src = p_data;
-    uint8_t *end = &src[i_data];
-    uint8_t *dst = nal->p_payload;
-
-    nal->i_type    = src[0]&0x1f;
-    nal->i_ref_idc = (src[0] >> 5)&0x03;
-
-    src++;
-
-    while( src < end )
-    {
-        if( src < end - 3 && src[0] == 0x00 && src[1] == 0x00  && src[2] == 0x03 )
-        {
-            *dst++ = 0x00;
-            *dst++ = 0x00;
-
-            src += 3;
-            continue;
-        }
-        *dst++ = *src++;
-    }
-
-    nal->i_payload = dst - (uint8_t*)p_data;
-    return 0;
 }
 
 

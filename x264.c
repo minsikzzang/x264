@@ -169,7 +169,11 @@ static void Help( x264_param_t *defaults, int b_longhelp )
     H1( "      --pre-scenecut          Faster, less precise scenecut detection.\n"
         "                                  Required and implied by multi-threading.\n" );
     H0( "  -b, --bframes <integer>     Number of B-frames between I and P [%d]\n", defaults->i_bframe );
-    H1( "      --no-b-adapt            Disable adaptive B-frame decision\n" );
+    H1( "      --b-adapt               Adaptive B-frame decision method [%d]\n"
+        "                                  Higher values may lower threading efficiency.\n"
+        "                                  - 0: Disabled\n"
+        "                                  - 1: Fast\n"
+        "                                  - 2: Optimal (slow with high --bframes)\n", defaults->i_bframe_adaptive );
     H1( "      --b-bias <integer>      Influences how often B-frames are used [%d]\n", defaults->i_bframe_bias );
     H0( "      --b-pyramid             Keep some B-frames as references\n" );
     H0( "      --no-cabac              Disable CABAC\n" );
@@ -194,10 +198,9 @@ static void Help( x264_param_t *defaults, int b_longhelp )
     H0( "      --ipratio <float>       QP factor between I and P [%.2f]\n", defaults->rc.f_ip_factor );
     H0( "      --pbratio <float>       QP factor between P and B [%.2f]\n", defaults->rc.f_pb_factor );
     H1( "      --chroma-qp-offset <integer>  QP difference between chroma and luma [%d]\n", defaults->analyse.i_chroma_qp_offset );
-    H0( "      --aq-mode <integer>     How AQ distributes bits [%d]\n"
+    H1( "      --aq-mode <integer>     AQ method [%d]\n"
         "                                  - 0: Disabled\n"
-        "                                  - 1: Avoid moving bits between frames\n"
-        "                                  - 2: Move bits between frames\n", defaults->rc.i_aq_mode );
+        "                                  - 1: Variance AQ (complexity mask)\n", defaults->rc.i_aq_mode );
     H0( "      --aq-strength <float>   Reduces blocking and blurring in flat and\n"
         "                              textured areas. [%.1f]\n"
         "                                  - 0.5: weak AQ\n"
@@ -248,6 +251,10 @@ static void Help( x264_param_t *defaults, int b_longhelp )
     H0( "  -m, --subme <integer>       Subpixel motion estimation and partition\n"
         "                                  decision quality: 1=fast, 7=best. [%d]\n", defaults->analyse.i_subpel_refine );
     H0( "      --b-rdo                 RD based mode decision for B-frames. Requires subme 6.\n" );
+    H0( "      --psy-rd                Strength of psychovisual optimization [\"%.1f:%.1f\"]\n"
+        "                                  #1: RDO (requires subme>=6)\n"
+        "                                  #2: Trellis (requires trellis, experimental)\n",
+                                       defaults->analyse.f_psy_rd, defaults->analyse.f_psy_trellis );
     H0( "      --mixed-refs            Decide references on a per partition basis\n" );
     H1( "      --no-chroma-me          Ignore chroma in motion estimation\n" );
     H1( "      --bime                  Jointly optimize both MVs in B-frames\n" );
@@ -380,6 +387,7 @@ static int  Parse( int argc, char **argv,
             { "version", no_argument,       NULL, 'V' },
             { "bitrate", required_argument, NULL, 'B' },
             { "bframes", required_argument, NULL, 'b' },
+            { "b-adapt", required_argument, NULL, 0 },
             { "no-b-adapt", no_argument,    NULL, 0 },
             { "b-bias",  required_argument, NULL, 0 },
             { "b-pyramid", no_argument,     NULL, 0 },
@@ -416,6 +424,7 @@ static int  Parse( int argc, char **argv,
             { "mvrange", required_argument, NULL, 0 },
             { "mvrange-thread", required_argument, NULL, 0 },
             { "subme",   required_argument, NULL, 'm' },
+            { "psy-rd",  required_argument, NULL, 0 },
             { "b-rdo",   no_argument,       NULL, 0 },
             { "mixed-refs", no_argument,    NULL, 0 },
             { "no-chroma-me", no_argument,  NULL, 0 },
@@ -545,7 +554,7 @@ static int  Parse( int argc, char **argv,
                     return -1;
                 }
                 param->i_scenecut_threshold = -1;
-                param->b_bframe_adaptive = 0;
+                param->i_bframe_adaptive = X264_B_ADAPT_NONE;
                 break;
             case OPT_THREAD_INPUT:
                 b_thread_input = 1;

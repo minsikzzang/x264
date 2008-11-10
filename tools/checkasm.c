@@ -645,6 +645,7 @@ static int check_dct( int cpu_ref, int cpu_new )
     ok = 1; used_asm = 0;
     TEST_ZIGZAG_SCAN( scan_8x8, level1, level2, (void*)dct1, 64 );
     TEST_ZIGZAG_SCAN( scan_4x4, level1, level2, dct1[0], 16  );
+    TEST_ZIGZAG_SCAN( interleave_8x8_cavlc, level1, level2, (void*)dct1, 64 );
     TEST_ZIGZAG_SUB( sub_4x4, level1, level2, 16 );
     report( "zigzag_frame :" );
 
@@ -1107,6 +1108,37 @@ static int check_quant( int cpu_ref, int cpu_new )
         }
     }
     report( "denoise dct :" );
+
+#define TEST_DECIMATE( qname, decname, block, w, ac ) \
+    if( qf_a.decname != qf_ref.decname ) \
+    { \
+        set_func_name( #decname ); \
+        used_asm = 1; \
+        for( i = 0; i < 100; i++ ) \
+        { \
+            int result_c, result_a, idx; \
+            for( idx = 0; idx < w*w; idx++ ) \
+                dct1[idx] = !(rand()&3) + (!(rand()&15))*(rand()&3); \
+            if( ac ) \
+                dct1[0] = 0; \
+            memcpy( dct2, dct1, w*w*2 ); \
+            result_c = call_c1( qf_c.decname, (void*)dct2 ); \
+            result_a = call_a1( qf_a.decname, (void*)dct2 ); \
+            if( result_c != result_a ) \
+            { \
+                ok = 0; \
+                fprintf( stderr, #decname ": [FAILED]\n" ); \
+                break; \
+            } \
+            call_c2( qf_c.decname, (void*)dct2 ); \
+            call_a2( qf_a.decname, (void*)dct2 ); \
+        } \
+    }
+
+    TEST_DECIMATE( quant_8x8, decimate_score64, CQM_8IY, 8, 0 );
+    TEST_DECIMATE( quant_4x4, decimate_score16, CQM_4IY, 4, 0 );
+    TEST_DECIMATE( quant_4x4, decimate_score15, CQM_4IY, 4, 1 );
+    report( "decimate_score :" );
 
     return ret;
 }

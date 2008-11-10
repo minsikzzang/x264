@@ -511,7 +511,8 @@ static int x264_validate_parameters( x264_t *h )
         h->mb.i_psy_trellis = 0;
     h->param.analyse.i_chroma_qp_offset = x264_clip3(h->param.analyse.i_chroma_qp_offset, -12, 12);
     h->param.rc.i_aq_mode = x264_clip3( h->param.rc.i_aq_mode, 0, 1 );
-    if( h->param.rc.f_aq_strength <= 0 )
+    h->param.rc.f_aq_strength = x264_clip3f( h->param.rc.f_aq_strength, 0, 3 );
+    if( h->param.rc.f_aq_strength == 0 )
         h->param.rc.i_aq_mode = 0;
     h->param.analyse.i_noise_reduction = x264_clip3( h->param.analyse.i_noise_reduction, 0, 1<<16 );
 
@@ -527,7 +528,6 @@ static int x264_validate_parameters( x264_t *h )
                 while( l[1].level_idc && x264_validate_levels( h, 0 ) && l++ );
             if( h->param.rc.i_vbv_buffer_size <= 0 )
                 h->param.rc.i_vbv_max_bitrate = 0;
-            x264_log( h, X264_LOG_DEBUG, "level_idc: %d\n", h->param.i_level_idc );
         }
         else
         {
@@ -745,6 +745,9 @@ x264_t *x264_encoder_open   ( x264_param_t *param )
         if( !strcmp(x264_cpu_names[i].name, "SSE3")
             && (param->cpu & X264_CPU_SSSE3 || !(param->cpu & X264_CPU_CACHELINE_64)) )
             continue;
+        if( !strcmp(x264_cpu_names[i].name, "SSE4.1")
+            && (param->cpu & X264_CPU_SSE42) )
+            continue;
         if( (param->cpu & x264_cpu_names[i].flags) == x264_cpu_names[i].flags
             && (!i || x264_cpu_names[i].flags != x264_cpu_names[i-1].flags) )
             p += sprintf( p, " %s", x264_cpu_names[i].name );
@@ -790,6 +793,12 @@ x264_t *x264_encoder_open   ( x264_param_t *param )
         }
     }
 
+    x264_log( h, X264_LOG_INFO, "profile %s, level %d.%d\n",
+        h->sps->i_profile_idc == PROFILE_BASELINE ? "Baseline" :
+        h->sps->i_profile_idc == PROFILE_MAIN ? "Main" :
+        h->sps->i_profile_idc == PROFILE_HIGH ? "High" :
+        "High 4:4:4 Predictive", h->sps->i_level_idc/10, h->sps->i_level_idc%10 );
+
     return h;
 }
 
@@ -809,7 +818,6 @@ int x264_encoder_reconfig( x264_t *h, x264_param_t *param )
     COPY( analyse.intra );
     COPY( analyse.inter );
     COPY( analyse.i_direct_mv_pred );
-    COPY( analyse.i_me_method );
     COPY( analyse.i_me_range );
     COPY( analyse.i_noise_reduction );
     COPY( analyse.i_subpel_refine );
@@ -818,7 +826,11 @@ int x264_encoder_reconfig( x264_t *h, x264_param_t *param )
     COPY( analyse.b_dct_decimate );
     COPY( analyse.b_fast_pskip );
     COPY( analyse.b_mixed_references );
+    COPY( analyse.f_psy_rd );
+    COPY( analyse.f_psy_trellis );
     // can only twiddle these if they were enabled to begin with:
+    if( h->param.analyse.i_me_method >= X264_ME_ESA || param->analyse.i_me_method < X264_ME_ESA )
+        COPY( analyse.i_me_method );
     if( h->pps->b_transform_8x8_mode )
         COPY( analyse.b_transform_8x8 );
     if( h->frames.i_max_ref1 > 1 )

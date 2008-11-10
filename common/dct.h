@@ -109,9 +109,6 @@ typedef struct
     void (*dct4x4dc) ( int16_t d[4][4] );
     void (*idct4x4dc)( int16_t d[4][4] );
 
-    void (*dct2x2dc) ( int16_t d[2][2] );
-    void (*idct2x2dc)( int16_t d[2][2] );
-
 } x264_dct_function_t;
 
 typedef struct
@@ -120,6 +117,7 @@ typedef struct
     void (*scan_4x4)( int16_t level[16], int16_t dct[4][4] );
     void (*sub_8x8)( int16_t level[64], const uint8_t *p_src, uint8_t *p_dst );
     void (*sub_4x4)( int16_t level[16], const uint8_t *p_src, uint8_t *p_dst );
+    void (*interleave_8x8_cavlc)( int16_t *dst, int16_t *src );
 
 } x264_zigzag_function_t;
 

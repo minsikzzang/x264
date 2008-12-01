@@ -5,6 +5,7 @@
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
+ *          Jason Garrett-Glaser <darkshikari@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1311,6 +1312,12 @@ static void x264_thread_sync_stat( x264_t *dst, x264_t *src )
 static int x264_slices_write( x264_t *h )
 {
     int i_frame_size;
+
+#ifdef HAVE_MMX
+    /* Misalign mask has to be set separately for each thread. */
+    if( h->param.cpu&X264_CPU_SSE_MISALIGN )
+        x264_cpu_mask_misalign_sse();
+#endif
 
 #if VISUALIZE
     if( h->param.b_visualize )

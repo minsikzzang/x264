@@ -4,6 +4,7 @@
 ;* Copyright (C) 2005-2008 x264 project
 ;*
 ;* Authors: Loren Merritt <lorenm@u.washington.edu>
+;*          Jason Garrett-Glaser <darkshikari@gmail.com>
 ;*          Christian Heine <sennindemokrit@gmx.net>
 ;*
 ;* This program is free software; you can redistribute it and/or modify
@@ -255,26 +256,30 @@ QUANT_DC x264_quant_2x2_dc_ssse3, 1
     %define t2d r1d
 %endif
 
-;-----------------------------------------------------------------------------
-; void x264_dequant_4x4_mmx( int16_t dct[4][4], int dequant_mf[6][4][4], int i_qp )
-;-----------------------------------------------------------------------------
-%macro DEQUANT 4
-cglobal x264_dequant_%2x%2_%1, 0,3
+%macro DEQUANT_START 2
     movifnidn t2d, r2m
     imul t0d, t2d, 0x2b
     shr  t0d, 8     ; i_qbits = i_qp / 6
     lea  t1, [t0*3]
     sub  t2d, t1d
     sub  t2d, t1d   ; i_mf = i_qp % 6
-    shl  t2d, %3+2
+    shl  t2d, %1
 %ifdef ARCH_X86_64
     add  r1, t2     ; dequant_mf[i_mf]
 %else
     add  r1, r1m    ; dequant_mf[i_mf]
     mov  r0, r0m    ; dct
 %endif
-    sub  t0d, %3
+    sub  t0d, %2
     jl   .rshift32  ; negative qbits => rightshift
+%endmacro
+
+;-----------------------------------------------------------------------------
+; void x264_dequant_4x4_mmx( int16_t dct[4][4], int dequant_mf[6][4][4], int i_qp )
+;-----------------------------------------------------------------------------
+%macro DEQUANT 4
+cglobal x264_dequant_%2x%2_%1, 0,3
+    DEQUANT_START %3+2, %3
 
 .lshift:
     movd m5, t0d
@@ -339,7 +344,67 @@ INIT_XMM
 DEQUANT sse2, 4, 4, 2
 DEQUANT sse2, 8, 6, 2
 
+%macro DEQUANT_DC 1
+cglobal x264_dequant_4x4dc_%1, 0,3
+    DEQUANT_START 6, 6
 
+.lshift:
+    movd   m6, [r1]
+    movd   m5, t0d
+    pslld  m6, m5
+%if mmsize==16
+    pshuflw  m6, m6, 0
+    punpcklqdq m6, m6
+%else
+    pshufw   m6, m6, 0
+%endif
+%assign x 0
+%rep 16/mmsize
+    mova     m0, [r0+mmsize*0+x]
+    mova     m1, [r0+mmsize*1+x]
+    pmullw   m0, m6
+    pmullw   m1, m6
+    mova     [r0+mmsize*0+x], m0
+    mova     [r0+mmsize*1+x], m1
+%assign x x+mmsize*2
+%endrep
+    RET
+
+.rshift32:
+    neg   t0d
+    movd  m5, t0d
+    mova  m6, [pw_1 GLOBAL]
+    mova  m7, m6
+    pslld m6, m5
+    psrld m6, 1
+    movd  m4, [r1]
+%if mmsize==8
+    punpcklwd m4, m4
+%else
+    pshuflw m4, m4, 0
+%endif
+    punpcklwd m4, m6
+%assign x 0
+%rep 32/mmsize
+    mova      m0, [r0+x]
+    mova      m1, m0
+    punpcklwd m0, m7
+    punpckhwd m1, m7
+    pmaddwd   m0, m4
+    pmaddwd   m1, m4
+    psrad     m0, m5
+    psrad     m1, m5
+    packssdw  m0, m1
+    mova      [r0+x], m0
+%assign x x+mmsize
+%endrep
+    RET
+%endmacro
+
+INIT_MMX
+DEQUANT_DC mmxext
+INIT_XMM
+DEQUANT_DC sse2
 
 ;-----------------------------------------------------------------------------
 ; void x264_denoise_dct_mmx( int16_t *dct, uint32_t *sum, uint16_t *offset, int size )
@@ -558,7 +623,7 @@ cglobal x264_decimate_score64_%1, 1,5
     xor   r3, -1
     je   .tryret
     xor   r4, -1
-.cont
+.cont:
     or    r0, r2
     jne  .ret9      ;r0 is zero at this point, so we don't need to zero it
 .loop:
@@ -607,3 +672,107 @@ INIT_XMM
 DECIMATE8x8 sse2
 DECIMATE8x8 ssse3
 
+%macro LAST_MASK_SSE2 2-3
+    movdqa   xmm0, [%2+ 0]
+    pxor     xmm2, xmm2
+    packsswb xmm0, [%2+16]
+    pcmpeqb  xmm0, xmm2
+    pmovmskb   %1, xmm0
+%endmacro
+
+%macro LAST_MASK_MMX 3
+    movq     mm0, [%2+ 0]
+    movq     mm1, [%2+16]
+    pxor     mm2, mm2
+    packsswb mm0, [%2+ 8]
+    packsswb mm1, [%2+24]
+    pcmpeqb  mm0, mm2
+    pcmpeqb  mm1, mm2
+    pmovmskb  %1, mm0
+    pmovmskb  %3, mm1
+    shl       %3, 8
+    or        %1, %3
+%endmacro
+
+%ifdef ARCH_X86_64
+cglobal x264_coeff_last4_mmxext, 1,1
+    bsr rax, [r0]
+    shr eax, 4
+    RET
+%else
+cglobal x264_coeff_last4_mmxext, 0,3
+    mov   edx, r0m
+    mov   eax, [edx+4]
+    xor   ecx, ecx
+    test  eax, eax
+    cmovz eax, [edx]
+    setnz cl
+    bsr   eax, eax
+    shr   eax, 4
+    lea   eax, [eax+ecx*2]
+    RET
+%endif
+
+%macro COEFF_LAST 1
+cglobal x264_coeff_last15_%1, 1,3
+    LAST_MASK r1d, r0-2, r2d
+    xor r1d, 0xffff
+    bsr eax, r1d
+    dec eax
+    RET
+
+cglobal x264_coeff_last16_%1, 1,3
+    LAST_MASK r1d, r0, r2d
+    xor r1d, 0xffff
+    bsr eax, r1d
+    RET
+
+%ifndef ARCH_X86_64
+%ifidn %1, mmxext
+    cglobal x264_coeff_last64_%1, 1,5
+%else
+    cglobal x264_coeff_last64_%1, 1,4
+%endif
+    LAST_MASK r1d, r0, r4d
+    LAST_MASK r2d, r0+32, r4d
+    shl r2d, 16
+    or  r1d, r2d
+    LAST_MASK r2d, r0+64, r4d
+    LAST_MASK r3d, r0+96, r4d
+    shl r3d, 16
+    or  r2d, r3d
+    not r1d
+    xor r2d, -1
+    jne .secondhalf
+    bsr eax, r1d
+    RET
+.secondhalf:
+    bsr eax, r2d
+    add eax, 32
+    RET
+%endif
+%endmacro
+
+%ifdef ARCH_X86_64
+    cglobal x264_coeff_last64_sse2, 1,4
+    LAST_MASK_SSE2 r1d, r0
+    LAST_MASK_SSE2 r2d, r0+32
+    LAST_MASK_SSE2 r3d, r0+64
+    LAST_MASK_SSE2 r0d, r0+96
+    shl r2d, 16
+    shl r0d, 16
+    or  r1d, r2d
+    or  r3d, r0d
+    shl r3,  32
+    or  r1,  r3
+    not r1
+    bsr rax, r1
+    RET
+%endif
+
+%ifndef ARCH_X86_64
+%define LAST_MASK LAST_MASK_MMX
+COEFF_LAST mmxext
+%endif
+%define LAST_MASK LAST_MASK_SSE2
+COEFF_LAST sse2

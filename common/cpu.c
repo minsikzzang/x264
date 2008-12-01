@@ -5,6 +5,7 @@
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Laurent Aimar <fenrir@via.ecp.fr>
+ *          Jason Garrett-Glaser <darkshikari@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -52,9 +53,11 @@ const x264_cpu_name_t x264_cpu_names[] = {
     {"SSE4.2",  X264_CPU_MMX|X264_CPU_MMXEXT|X264_CPU_SSE|X264_CPU_SSE2|X264_CPU_SSE3|X264_CPU_SSSE3|X264_CPU_SSE4|X264_CPU_SSE42},
     {"Cache32", X264_CPU_CACHELINE_32},
     {"Cache64", X264_CPU_CACHELINE_64},
+    {"SSEMisalign", X264_CPU_SSE_MISALIGN},
     {"Slow_mod4_stack", X264_CPU_STACK_MOD4},
     {"", 0},
 };
+
 
 #ifdef HAVE_MMX
 extern int  x264_cpu_cpuid_test( void );
@@ -111,7 +114,11 @@ uint32_t x264_cpu_detect( void )
         if( cpu & X264_CPU_SSE2 )
         {
             if( ecx&0x00000040 ) /* SSE4a */
+            {
                 cpu |= X264_CPU_SSE2_IS_FAST;
+                cpu |= X264_CPU_SSE_MISALIGN;
+                x264_cpu_mask_misalign_sse();
+            }
             else
                 cpu |= X264_CPU_SSE2_IS_SLOW;
         }

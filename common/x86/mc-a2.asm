@@ -5,6 +5,7 @@
 ;*
 ;* Authors: Loren Merritt <lorenm@u.washington.edu>
 ;*          Jason Garrett-Glaser <darkshikari@gmail.com>
+;*          Holger Lubitz <hal@duncan.ol.sub.de>
 ;*          Mathieu Monnier <manao@melix.net>
 ;*
 ;* This program is free software; you can redistribute it and/or modify
@@ -249,6 +250,14 @@ cglobal x264_hpel_filter_c_%1, 3,3
     %define tpw_32 [pw_32 GLOBAL]
 %endif
 .loop:
+%ifidn %1,sse2_misalign
+    movu    m0, [src-4]
+    movu    m1, [src-2]
+    mova    m2, [src]
+    paddw   m0, [src+6]
+    paddw   m1, [src+4]
+    paddw   m2, [src+2]
+%else
     mova    m6, [src-16]
     mova    m2, [src]
     mova    m3, [src+16]
@@ -264,6 +273,7 @@ cglobal x264_hpel_filter_c_%1, 3,3
     paddw   m2, m3
     paddw   m1, m4
     paddw   m0, m5
+%endif
     FILT_H  m0, m1, m2
     paddw   m0, tpw_32
     psraw   m0, 6
@@ -322,6 +332,7 @@ cglobal x264_hpel_filter_h_sse2, 3,3
     jl .loop
     REP_RET
 
+%ifndef ARCH_X86_64
 ;-----------------------------------------------------------------------------
 ; void x264_hpel_filter_h_ssse3( uint8_t *dst, uint8_t *src, int width );
 ;-----------------------------------------------------------------------------
@@ -387,11 +398,14 @@ cglobal x264_hpel_filter_h_ssse3, 3,3
 
     jl .loop
     REP_RET
-
+%endif
 
 %define PALIGNR PALIGNR_MMX
-HPEL_V sse2
+%ifndef ARCH_X86_64
 HPEL_C sse2
+%endif
+HPEL_V sse2
+HPEL_C sse2_misalign
 %define PALIGNR PALIGNR_SSSE3
 HPEL_C ssse3
 

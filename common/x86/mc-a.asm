@@ -4,8 +4,8 @@
 ;* Copyright (C) 2003-2008 x264 project
 ;*
 ;* Authors: Loren Merritt <lorenm@u.washington.edu>
-;*          Laurent Aimar <fenrir@via.ecp.fr>
 ;*          Jason Garrett-Glaser <darkshikari@gmail.com>
+;*          Laurent Aimar <fenrir@via.ecp.fr>
 ;*          Min Chen <chenm001.163.com>
 ;*
 ;* This program is free software; you can redistribute it and/or modify
@@ -77,7 +77,7 @@ SECTION .text
 %macro SPLATW 2
 %if mmsize==16
     pshuflw  %1, %2, 0
-    movlhps  %1, %1
+    punpcklqdq %1, %1
 %else
     pshufw   %1, %2, 0
 %endif
@@ -386,18 +386,24 @@ cglobal x264_pixel_avg2_w16_sse2, 6,7
     jg     .height_loop
     REP_RET
 
-cglobal x264_pixel_avg2_w20_sse2, 6,7
+%macro AVG2_W20 1
+cglobal x264_pixel_avg2_w20_%1, 6,7
     sub    r4, r2
     lea    r6, [r4+r3]
 .height_loop:
     movdqu xmm0, [r2]
     movdqu xmm2, [r2+r3]
-    movdqu xmm1, [r2+r4]
-    movdqu xmm3, [r2+r6]
     movd   mm4,  [r2+16]
     movd   mm5,  [r2+r3+16]
+%ifidn %1, sse2_misalign
+    pavgb  xmm0, [r2+r4]
+    pavgb  xmm2, [r2+r6]
+%else
+    movdqu xmm1, [r2+r4]
+    movdqu xmm3, [r2+r6]
     pavgb  xmm0, xmm1
     pavgb  xmm2, xmm3
+%endif
     pavgb  mm4,  [r2+r4+16]
     pavgb  mm5,  [r2+r6+16]
     movdqa [r0], xmm0
@@ -409,6 +415,10 @@ cglobal x264_pixel_avg2_w20_sse2, 6,7
     sub    r5d, 2
     jg     .height_loop
     REP_RET
+%endmacro
+
+AVG2_W20 sse2
+AVG2_W20 sse2_misalign
 
 ; Cacheline split code for processors with high latencies for loads
 ; split over cache lines.  See sad-a.asm for a more detailed explanation.

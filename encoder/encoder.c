@@ -411,6 +411,7 @@ static int x264_validate_parameters( x264_t *h )
         h->param.analyse.b_fast_pskip = 0;
         h->param.analyse.i_noise_reduction = 0;
         h->param.analyse.f_psy_rd = 0;
+        h->param.i_bframe = 0;
         /* 8x8dct is not useful at all in CAVLC lossless */
         if( !h->param.b_cabac )
             h->param.analyse.b_transform_8x8 = 0;
@@ -713,6 +714,7 @@ x264_t *x264_encoder_open   ( x264_param_t *param )
           || h->param.i_bframe_adaptive
           || h->param.b_pre_scenecut );
     h->frames.b_have_lowres |= (h->param.rc.b_stat_read && h->param.rc.i_vbv_buffer_size > 0);
+    h->frames.b_have_sub8x8_esa = !!(h->param.analyse.inter & X264_ANALYSE_PSUB8x8);
 
     h->frames.i_last_idr = - h->param.i_keyint_max;
     h->frames.i_input    = 0;
@@ -824,7 +826,9 @@ int x264_encoder_reconfig( x264_t *h, x264_param_t *param )
     COPY( analyse.intra );
     COPY( analyse.inter );
     COPY( analyse.i_direct_mv_pred );
-    COPY( analyse.i_me_range );
+    /* Scratch buffer prevents me_range from being increased for esa/tesa */
+    if( h->param.analyse.i_me_method < X264_ME_ESA || param->analyse.i_me_range < h->param.analyse.i_me_range )
+        COPY( analyse.i_me_range );
     COPY( analyse.i_noise_reduction );
     /* We can't switch out of subme=0 during encoding. */
     if( h->param.analyse.i_subpel_refine )
@@ -839,6 +843,8 @@ int x264_encoder_reconfig( x264_t *h, x264_param_t *param )
     // can only twiddle these if they were enabled to begin with:
     if( h->param.analyse.i_me_method >= X264_ME_ESA || param->analyse.i_me_method < X264_ME_ESA )
         COPY( analyse.i_me_method );
+    if( h->param.analyse.i_me_method >= X264_ME_ESA && !h->frames.b_have_sub8x8_esa )
+        h->param.analyse.inter &= ~X264_ANALYSE_PSUB8x8;
     if( h->pps->b_transform_8x8_mode )
         COPY( analyse.b_transform_8x8 );
     if( h->frames.i_max_ref1 > 1 )
@@ -1046,7 +1052,7 @@ static void x264_fdec_filter_row( x264_t *h, int mb_y )
             x264_pixel_ssim_wxh( &h->pixf,
                 h->fdec->plane[0] + 2+min_y*h->fdec->i_stride[0], h->fdec->i_stride[0],
                 h->fenc->plane[0] + 2+min_y*h->fenc->i_stride[0], h->fenc->i_stride[0],
-                h->param.i_width-2, max_y-min_y );
+                h->param.i_width-2, max_y-min_y, h->scratch_buffer );
     }
 }
 
@@ -1433,7 +1439,7 @@ int     x264_encoder_encode( x264_t *h,
             return 0;
         }
 
-        x264_slicetype_decide( h );
+        x264_stack_align( x264_slicetype_decide, h );
 
         /* 3: move some B-frames and 1 non-B to encode queue */
         while( IS_X264_TYPE_B( h->frames.next[bframes]->i_type ) )
@@ -1976,8 +1982,8 @@ void    x264_encoder_close  ( x264_t *h )
         for( i = 0; i < X264_PARTTYPE_MAX; i++ )
             for( j = 0; j < 2; j++ )
             {
-                int l0 = x264_mb_type_list0_table[i][j];
-                int l1 = x264_mb_type_list1_table[i][j];
+                int l0 = x264_mb_type_list_table[i][0][j];
+                int l1 = x264_mb_type_list_table[i][1][j];
                 if( l0 || l1 )
                     list_count[l1+l0*l1] += h->stat.i_mb_count[SLICE_TYPE_B][i] * 2;
             }

@@ -18,10 +18,14 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
+#ifdef SYS_LINUX
+#include <altivec.h>
+#endif
+
 /***********************************************************************
  * For constant vectors, use parentheses on OS X and braces on Linux
  **********************************************************************/
-#ifdef SYS_MACOSX
+#if defined(__APPLE__) && __GNUC__ < 4
 #define CV(a...) (a)
 #else
 #define CV(a...) {a}

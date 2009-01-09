@@ -174,8 +174,8 @@ static NOINLINE int ac_energy_mb( x264_t *h, int mb_x, int mb_y, x264_frame_t *f
      * and putting it after floating point ops.  As a result, we put the emms at the end of the
      * function and make sure that its always called before the float math.  Noinline makes
      * sure no reordering goes on. */
-    unsigned int var=0, sad, i;
-    for( i=0; i<3; i++ )
+    unsigned int var = 0, i;
+    for( i = 0; i < 3; i++ )
     {
         int w = i ? 8 : 16;
         int stride = frame->i_stride[i];
@@ -184,7 +184,7 @@ static NOINLINE int ac_energy_mb( x264_t *h, int mb_x, int mb_y, x264_frame_t *f
             : w * (mb_x + mb_y * stride);
         int pix = i ? PIXEL_8x8 : PIXEL_16x16;
         stride <<= h->mb.b_interlaced;
-        var += h->pixf.var[pix]( frame->plane[i]+offset, stride, &sad );
+        var += h->pixf.var[pix]( frame->plane[i]+offset, stride );
     }
     var = X264_MAX(var,1);
     x264_emms();
@@ -612,7 +612,7 @@ static int parse_zone( x264_t *h, x264_zone_t *z, char *p )
     p += len;
     if( !*p )
         return 0;
-    z->param = malloc( sizeof(x264_param_t) );
+    z->param = x264_malloc( sizeof(x264_param_t) );
     memcpy( z->param, &h->param, sizeof(x264_param_t) );
     while( (tok = strtok_r( p, ",", &saveptr )) )
     {
@@ -1507,7 +1507,7 @@ static float rate_estimate_qscale( x264_t *h )
                     expected_size = qscale2bits(&rce, q);
                     expected_vbv = rcc->buffer_fill + rcc->buffer_rate - expected_size;
                 }
-                rcc->last_satd = x264_rc_analyse_slice( h );
+                rcc->last_satd = x264_stack_align( x264_rc_analyse_slice, h );
             }
             q = x264_clip3f( q, lmin, lmax );
         }
@@ -1525,7 +1525,7 @@ static float rate_estimate_qscale( x264_t *h )
 
             double wanted_bits, overflow=1, lmin, lmax;
 
-            rcc->last_satd = x264_rc_analyse_slice( h );
+            rcc->last_satd = x264_stack_align( x264_rc_analyse_slice, h );
             rcc->short_term_cplxsum *= 0.5;
             rcc->short_term_cplxcount *= 0.5;
             rcc->short_term_cplxsum += rcc->last_satd;

@@ -220,7 +220,9 @@ static void Help( x264_param_t *defaults, int b_longhelp )
         "                                  where <option> is either\n"
         "                                      q=<integer> (force QP)\n"
         "                                  or  b=<float> (bitrate multiplier)\n" );
-    H1( "      --qpfile <string>       Force frametypes and QPs\n" );
+    H1( "      --qpfile <string>       Force frametypes and QPs for some or all frames\n"
+        "                              Format of each line: framenumber frametype QP\n"
+        "                              QP of -1 lets x264 choose. Frametypes: I,i,P,B,b.\n" );
     H0( "\n" );
     H0( "Analysis:\n" );
     H0( "\n" );
@@ -231,11 +233,6 @@ static void Help( x264_param_t *defaults, int b_longhelp )
     H0( "      --direct <string>       Direct MV prediction mode [\"%s\"]\n"
         "                                  - none, spatial, temporal, auto\n",
                                        strtable_lookup( x264_direct_pred_names, defaults->analyse.i_direct_mv_pred ) );
-    H1( "      --direct-8x8 <-1|0|1>   Direct prediction size [%d]\n"
-        "                                  -  0: 4x4\n"
-        "                                  -  1: 8x8\n"
-        "                                  - -1: smallest possible according to level\n",
-                                       defaults->analyse.i_direct_8x8_inference );
     H0( "  -w, --weightb               Weighted prediction for B-frames\n" );
     H0( "      --me <string>           Integer pixel motion estimation method [\"%s\"]\n",
                                        strtable_lookup( x264_motion_est_names, defaults->analyse.i_me_method ) );
@@ -423,7 +420,6 @@ static int  Parse( int argc, char **argv,
             { "analyse", required_argument, NULL, 0 },
             { "partitions", required_argument, NULL, 'A' },
             { "direct",  required_argument, NULL, 0 },
-            { "direct-8x8", required_argument, NULL, 0 },
             { "weightb", no_argument,       NULL, 'w' },
             { "me",      required_argument, NULL, 0 },
             { "merange", required_argument, NULL, 0 },
@@ -563,8 +559,6 @@ static int  Parse( int argc, char **argv,
                     fprintf( stderr, "x264 [error]: can't open `%s'\n", optarg );
                     return -1;
                 }
-                param->i_scenecut_threshold = -1;
-                param->i_bframe_adaptive = X264_B_ADAPT_NONE;
                 break;
             case OPT_THREAD_INPUT:
                 b_thread_input = 1;

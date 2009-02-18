@@ -727,7 +727,7 @@ x264_t *x264_encoder_open   ( x264_param_t *param )
     /* init CPU functions */
     x264_predict_16x16_init( h->param.cpu, h->predict_16x16 );
     x264_predict_8x8c_init( h->param.cpu, h->predict_8x8c );
-    x264_predict_8x8_init( h->param.cpu, h->predict_8x8 );
+    x264_predict_8x8_init( h->param.cpu, h->predict_8x8, &h->predict_8x8_filter );
     x264_predict_4x4_init( h->param.cpu, h->predict_4x4 );
     if( !h->param.b_cabac );
         x264_init_vlc_tables();
@@ -1734,7 +1734,8 @@ static void x264_encoder_frame_end( x264_t *h, x264_t *thread_current,
     pic_out->i_pts = h->fenc->i_pts;
 
     pic_out->img.i_plane = h->fdec->i_plane;
-    for(i = 0; i < 4; i++){
+    for(i = 0; i < 3; i++)
+    {
         pic_out->img.i_stride[i] = h->fdec->i_stride[i];
         pic_out->img.plane[i] = h->fdec->plane[i];
     }

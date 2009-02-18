@@ -74,8 +74,8 @@ DEP  = depend
 default: $(DEP) x264$(EXE)
 
 libx264.a: .depend $(OBJS) $(OBJASM)
-	ar rc libx264.a $(OBJS) $(OBJASM)
-	ranlib libx264.a
+	$(AR) rc libx264.a $(OBJS) $(OBJASM)
+	$(RANLIB) libx264.a
 
 $(SONAME): .depend $(OBJS) $(OBJASM)
 	$(CC) -shared -o $@ $(OBJS) $(OBJASM) $(SOFLAGS) $(LDFLAGS)
@@ -89,15 +89,14 @@ checkasm: tools/checkasm.o libx264.a
 %.o: %.asm
 	$(AS) $(ASFLAGS) -o $@ $<
 # delete local/anonymous symbols, so they don't show up in oprofile
-	-@ strip -x $@
+	-@ $(STRIP) -x $@
 
 .depend: config.mak
 	rm -f .depend
-# Hacky - because gcc 2.9x doesn't have -MT
-	$(foreach SRC, $(SRCS) $(SRCCLI), ( $(ECHON) "`dirname $(SRC)`/" && $(CC) $(CFLAGS) $(ALTIVECFLAGS) $(SRC) -MM -g0 ) 1>> .depend;)
+	$(foreach SRC, $(SRCS) $(SRCCLI), $(CC) $(CFLAGS) $(ALTIVECFLAGS) $(SRC) -MT $(SRC:%.c=%.o) -MM -g0 1>> .depend;)
 
-config.mak: $(wildcard .svn/entries */.svn/entries */*/.svn/entries)
-	./configure $(CONFIGURE_ARGS)
+config.mak:
+	./configure
 
 depend: .depend
 ifneq ($(wildcard .depend),)
@@ -136,7 +135,7 @@ endif
 
 clean:
 	rm -f $(OBJS) $(OBJASM) $(OBJCLI) $(SONAME) *.a x264 x264.exe .depend TAGS
-	rm -f checkasm checkasm.exe tools/checkasm.o
+	rm -f checkasm checkasm.exe tools/checkasm.o tools/checkasm-a.o
 	rm -f $(SRC2:%.c=%.gcda) $(SRC2:%.c=%.gcno)
 	- sed -e 's/ *-fprofile-\(generate\|use\)//g' config.mak > config.mak2 && mv config.mak2 config.mak
 
@@ -151,7 +150,7 @@ install: x264$(EXE) $(SONAME)
 	install -m 644 libx264.a $(DESTDIR)$(libdir)
 	install -m 644 x264.pc $(DESTDIR)$(libdir)/pkgconfig
 	install x264$(EXE) $(DESTDIR)$(bindir)
-	ranlib $(DESTDIR)$(libdir)/libx264.a
+	$(RANLIB) $(DESTDIR)$(libdir)/libx264.a
 ifeq ($(SYS),MINGW)
 	$(if $(SONAME), install -m 755 $(SONAME) $(DESTDIR)$(bindir))
 else

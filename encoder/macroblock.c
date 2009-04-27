@@ -548,7 +548,7 @@ void x264_macroblock_encode( x264_t *h )
         {
             uint8_t  *p_dst = &h->mb.pic.p_fdec[0][8 * (i&1) + 8 * (i>>1) * FDEC_STRIDE];
             int      i_mode = h->mb.cache.intra4x4_pred_mode[x264_scan8[4*i]];
-            x264_predict_8x8_filter( p_dst, edge, h->mb.i_neighbour8[i], x264_pred_i4x4_neighbors[i_mode] );
+            h->predict_8x8_filter( p_dst, edge, h->mb.i_neighbour8[i], x264_pred_i4x4_neighbors[i_mode] );
 
             if( h->mb.b_lossless )
                 x264_predict_lossless_8x8( h, p_dst, i, i_mode, edge );
@@ -802,7 +802,7 @@ int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
 
     int i_qp = h->mb.i_qp;
     int mvp[2];
-    int ch, thresh;
+    int ch, thresh, ssd;
 
     int i8x8, i4x4;
     int i_decimate_mb;
@@ -856,7 +856,8 @@ int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
 
         /* there is almost never a termination during chroma, but we can't avoid the check entirely */
         /* so instead we check SSD and skip the actual check if the score is low enough. */
-        if( h->pixf.ssd[PIXEL_8x8]( p_dst, FDEC_STRIDE, p_src, FENC_STRIDE ) < thresh )
+        ssd = h->pixf.ssd[PIXEL_8x8]( p_dst, FDEC_STRIDE, p_src, FENC_STRIDE );
+        if( ssd < thresh )
             continue;
 
         h->dctf.sub8x8_dct( dct4x4, p_src, p_dst );
@@ -865,6 +866,10 @@ int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
         dct2x2dc( dct2x2, dct4x4 );
         if( h->quantf.quant_2x2_dc( dct2x2, h->quant4_mf[CQM_4PC][i_qp][0]>>1, h->quant4_bias[CQM_4PC][i_qp][0]<<1 ) )
             return 0;
+
+        /* If there wasn't a termination in DC, we can check against a much higher threshold. */
+        if( ssd < thresh*4 )
+            continue;
 
         /* calculate dct coeffs */
         for( i4x4 = 0, i_decimate_mb = 0; i4x4 < 4; i4x4++ )

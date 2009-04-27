@@ -200,12 +200,12 @@ lowres_intra_mb:
                 pix[i*FDEC_STRIDE] = src[i*i_stride];
             pix++;
 
-            if( h->pixf.intra_satd_x3_8x8c && h->pixf.mbcmp[0] == h->pixf.satd[0] )
+            if( h->pixf.intra_mbcmp_x3_8x8c )
             {
-                h->pixf.intra_satd_x3_8x8c( h->mb.pic.p_fenc[0], pix, satds );
+                h->pixf.intra_mbcmp_x3_8x8c( h->mb.pic.p_fenc[0], pix, satds );
                 h->predict_8x8c[I_PRED_CHROMA_P]( pix );
                 satds[I_PRED_CHROMA_P] =
-                    h->pixf.satd[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
+                    h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
             }
             else
             {
@@ -217,7 +217,7 @@ lowres_intra_mb:
             }
             i_icost = X264_MIN4( satds[0], satds[1], satds[2], satds[3] );
 
-            x264_predict_8x8_filter( pix, edge, ALL_NEIGHBORS, ALL_NEIGHBORS );
+            h->predict_8x8_filter( pix, edge, ALL_NEIGHBORS, ALL_NEIGHBORS );
             for( i=3; i<9; i++ )
             {
                 int satd;

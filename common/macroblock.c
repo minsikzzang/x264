@@ -221,7 +221,7 @@ static int x264_mb_predict_mv_direct16x16_temporal( x264_t *h )
 static int x264_mb_predict_mv_direct16x16_spatial( x264_t *h )
 {
     int ref[2];
-    DECLARE_ALIGNED_8( int16_t mv[2][2] );
+    ALIGNED_8( int16_t mv[2][2] );
     int i_list;
     int i8;
     const int8_t *l1ref0 = &h->fref1[0]->ref[0][ h->mb.i_b8_xy ];
@@ -520,8 +520,8 @@ static inline void x264_mb_mc_01xywh( x264_t *h, int x, int y, int width, int he
     int       mvy1   = x264_clip3( h->mb.cache.mv[1][i8][1], h->mb.mv_min[1], h->mb.mv_max[1] );
     int       i_mode = x264_size2pixel[height][width];
     int       i_stride0 = 16, i_stride1 = 16;
-    DECLARE_ALIGNED_16( uint8_t tmp0[16*16] );
-    DECLARE_ALIGNED_16( uint8_t tmp1[16*16] );
+    ALIGNED_ARRAY_16( uint8_t, tmp0,[16*16] );
+    ALIGNED_ARRAY_16( uint8_t, tmp1,[16*16] );
     uint8_t *src0, *src1;
 
     src0 = h->mc.get_ref( tmp0, &i_stride0, h->mb.pic.p_fref[0][i_ref0], h->mb.pic.i_stride[0],
@@ -702,7 +702,8 @@ int x264_macroblock_cache_init( x264_t *h )
     for( i=0; i<=h->param.b_interlaced; i++ )
         for( j=0; j<3; j++ )
         {
-            CHECKED_MALLOC( h->mb.intra_border_backup[i][j], h->fdec->i_stride[j] );
+            /* shouldn't really be initialized, just silences a valgrind false-positive in predict_8x8_filter_mmx */
+            CHECKED_MALLOCZERO( h->mb.intra_border_backup[i][j], h->fdec->i_stride[j] );
             h->mb.intra_border_backup[i][j] += 8;
         }
 
@@ -743,7 +744,8 @@ int x264_macroblock_cache_init( x264_t *h )
     int me_range = X264_MIN(h->param.analyse.i_me_range, h->param.analyse.i_mv_range);
     int buf_tesa = (h->param.analyse.i_me_method >= X264_ME_ESA) *
         ((me_range*2+18) * sizeof(int16_t) + (me_range+4) * (me_range+1) * 4 * sizeof(mvsad_t));
-    CHECKED_MALLOC( h->scratch_buffer, X264_MAX3( buf_hpel, buf_ssim, buf_tesa ) );
+    int buf_mbtree = h->param.rc.b_mb_tree * ((h->sps->i_mb_width+3)&~3) * sizeof(int);
+    CHECKED_MALLOC( h->scratch_buffer, X264_MAX4( buf_hpel, buf_ssim, buf_tesa, buf_mbtree ) );
 
     return 0;
 fail: return -1;

@@ -37,20 +37,23 @@
 #define FIX8(f) ((int)(f*(1<<8)+.5))
 
 #define CHECKED_MALLOC( var, size )\
-{\
+do {\
     var = x264_malloc( size );\
     if( !var )\
-    {\
-        x264_log( h, X264_LOG_ERROR, "malloc failed\n" );\
         goto fail;\
-    }\
-}
+} while( 0 )
+#define CHECKED_MALLOCZERO( var, size )\
+do {\
+    CHECKED_MALLOC( var, size );\
+    memset( var, 0, size );\
+} while( 0 )
 
 #define X264_BFRAME_MAX 16
 #define X264_THREAD_MAX 128
 #define X264_SLICE_MAX 4
 #define X264_NAL_MAX (4 + X264_SLICE_MAX)
 #define X264_PCM_COST (386*8)
+#define X264_LOOKAHEAD_MAX 250
 
 // number of pixels (per thread) in progress at any given time.
 // 16 for the macroblock in progress + 3 for deblocking + 3 for motion compensation filter + 2 for extra safety
@@ -82,7 +85,6 @@
 /* x264_malloc : will do or emulate a memalign
  * you have to use x264_free for buffers allocated with x264_malloc */
 void *x264_malloc( int );
-void *x264_realloc( void *p, int i_size );
 void  x264_free( void * );
 
 /* x264_slurp_file: malloc space for the whole file and read it */
@@ -150,6 +152,26 @@ static inline uint32_t x264_cabac_amvd_sum( int16_t *mvdleft, int16_t *mvdtop )
     amvd0 = (amvd0 > 2) + (amvd0 > 32);
     amvd1 = (amvd1 > 2) + (amvd1 > 32);
     return amvd0 + (amvd1<<16);
+}
+
+extern const uint8_t x264_exp2_lut[64];
+extern const float x264_log2_lut[128];
+extern const float x264_log2_lz_lut[32];
+
+/* Not a general-purpose function; multiplies input by -1/6 to convert
+ * qp to qscale. */
+static ALWAYS_INLINE int x264_exp2fix8( float x )
+{
+    if( x >= 512.f/6.f ) return 0;
+    if( x <= -512.f/6.f ) return 0xffff;
+    int i = x*(-64.f/6.f) + 512;
+    return (x264_exp2_lut[i&63]+256) << (i>>6) >> 8;
+}
+
+static ALWAYS_INLINE float x264_log2( uint32_t x )
+{
+    int lz = x264_clz( x );
+    return x264_log2_lut[(x<<lz>>24)&0x7f] + x264_log2_lz_lut[lz];
 }
 
 /****************************************************************************
@@ -314,8 +336,8 @@ struct x264_t
 
     const uint8_t   *chroma_qp_table; /* includes both the nonlinear luma->chroma mapping and chroma_qp_offset */
 
-    DECLARE_ALIGNED_16( uint32_t nr_residual_sum[2][64] );
-    DECLARE_ALIGNED_16( uint16_t nr_offset[2][64] );
+    ALIGNED_16( uint32_t nr_residual_sum[2][64] );
+    ALIGNED_16( uint16_t nr_offset[2][64] );
     uint32_t        nr_count[2];
 
     /* Slice header */
@@ -327,11 +349,11 @@ struct x264_t
     struct
     {
         /* Frames to be encoded (whose types have been decided) */
-        x264_frame_t *current[X264_BFRAME_MAX*4+3];
+        x264_frame_t *current[X264_LOOKAHEAD_MAX+3];
         /* Temporary buffer (frames types not yet decided) */
-        x264_frame_t *next[X264_BFRAME_MAX*4+3];
+        x264_frame_t *next[X264_LOOKAHEAD_MAX+3];
         /* Unused frames */
-        x264_frame_t *unused[X264_BFRAME_MAX*4 + X264_THREAD_MAX*2 + 16+4];
+        x264_frame_t *unused[X264_LOOKAHEAD_MAX + X264_THREAD_MAX*2 + 16+4];
         /* For adaptive B decision */
         x264_frame_t *last_nonb;
 
@@ -368,11 +390,11 @@ struct x264_t
     /* Current MB DCT coeffs */
     struct
     {
-        DECLARE_ALIGNED_16( int16_t luma16x16_dc[16] );
-        DECLARE_ALIGNED_16( int16_t chroma_dc[2][4] );
+        ALIGNED_16( int16_t luma16x16_dc[16] );
+        ALIGNED_16( int16_t chroma_dc[2][4] );
         // FIXME share memory?
-        DECLARE_ALIGNED_16( int16_t luma8x8[4][64] );
-        DECLARE_ALIGNED_16( int16_t luma4x4[16+8][16] );
+        ALIGNED_16( int16_t luma8x8[4][64] );
+        ALIGNED_16( int16_t luma4x4[16+8][16] );
     } dct;
 
     /* MB table and cache for current frame/mb */
@@ -449,7 +471,7 @@ struct x264_t
         /* current value */
         int     i_type;
         int     i_partition;
-        DECLARE_ALIGNED_4( uint8_t i_sub_partition[4] );
+        ALIGNED_4( uint8_t i_sub_partition[4] );
         int     b_transform_8x8;
 
         int     i_cbp_luma;
@@ -472,22 +494,22 @@ struct x264_t
             /* space for p_fenc and p_fdec */
 #define FENC_STRIDE 16
 #define FDEC_STRIDE 32
-            DECLARE_ALIGNED_16( uint8_t fenc_buf[24*FENC_STRIDE] );
-            DECLARE_ALIGNED_16( uint8_t fdec_buf[27*FDEC_STRIDE] );
+            ALIGNED_16( uint8_t fenc_buf[24*FENC_STRIDE] );
+            ALIGNED_16( uint8_t fdec_buf[27*FDEC_STRIDE] );
 
             /* i4x4 and i8x8 backup data, for skipping the encode stage when possible */
-            DECLARE_ALIGNED_16( uint8_t i4x4_fdec_buf[16*16] );
-            DECLARE_ALIGNED_16( uint8_t i8x8_fdec_buf[16*16] );
-            DECLARE_ALIGNED_16( int16_t i8x8_dct_buf[3][64] );
-            DECLARE_ALIGNED_16( int16_t i4x4_dct_buf[15][16] );
+            ALIGNED_16( uint8_t i4x4_fdec_buf[16*16] );
+            ALIGNED_16( uint8_t i8x8_fdec_buf[16*16] );
+            ALIGNED_16( int16_t i8x8_dct_buf[3][64] );
+            ALIGNED_16( int16_t i4x4_dct_buf[15][16] );
             uint32_t i4x4_nnz_buf[4];
             uint32_t i8x8_nnz_buf[4];
             int i4x4_cbp;
             int i8x8_cbp;
 
             /* Psy trellis DCT data */
-            DECLARE_ALIGNED_16( int16_t fenc_dct8[4][64] );
-            DECLARE_ALIGNED_16( int16_t fenc_dct4[16][16] );
+            ALIGNED_16( int16_t fenc_dct8[4][64] );
+            ALIGNED_16( int16_t fenc_dct4[16][16] );
 
             /* Psy RD SATD scores */
             int fenc_satd[4][4];
@@ -522,18 +544,18 @@ struct x264_t
             uint8_t non_zero_count[X264_SCAN8_SIZE];
 
             /* -1 if unused, -2 if unavailable */
-            DECLARE_ALIGNED_4( int8_t ref[2][X264_SCAN8_SIZE] );
+            ALIGNED_4( int8_t ref[2][X264_SCAN8_SIZE] );
 
             /* 0 if not available */
-            DECLARE_ALIGNED_16( int16_t mv[2][X264_SCAN8_SIZE][2] );
-            DECLARE_ALIGNED_8( int16_t mvd[2][X264_SCAN8_SIZE][2] );
+            ALIGNED_16( int16_t mv[2][X264_SCAN8_SIZE][2] );
+            ALIGNED_8( int16_t mvd[2][X264_SCAN8_SIZE][2] );
 
             /* 1 if SKIP or DIRECT. set only for B-frames + CABAC */
-            DECLARE_ALIGNED_4( int8_t skip[X264_SCAN8_SIZE] );
+            ALIGNED_4( int8_t skip[X264_SCAN8_SIZE] );
 
-            DECLARE_ALIGNED_16( int16_t direct_mv[2][X264_SCAN8_SIZE][2] );
-            DECLARE_ALIGNED_4( int8_t  direct_ref[2][X264_SCAN8_SIZE] );
-            DECLARE_ALIGNED_4( int16_t pskip_mv[2] );
+            ALIGNED_16( int16_t direct_mv[2][X264_SCAN8_SIZE][2] );
+            ALIGNED_4( int8_t  direct_ref[2][X264_SCAN8_SIZE] );
+            ALIGNED_4( int16_t pskip_mv[2] );
 
             /* number of neighbors (top and left) that used 8x8 dct */
             int     i_neighbour_transform_size;
@@ -553,6 +575,11 @@ struct x264_t
         int     b_lossless;
         int     b_direct_auto_read; /* take stats for --direct auto from the 2pass log */
         int     b_direct_auto_write; /* analyse direct modes, to use and/or save */
+
+        /* lambda values */
+        int     i_trellis_lambda2[2][2]; /* [luma,chroma][inter,intra] */
+        int     i_psy_rd_lambda;
+        int     i_chroma_lambda2_offset;
 
         /* B_direct and weighted prediction */
         int16_t dist_scale_factor[16][2];

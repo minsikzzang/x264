@@ -1,10 +1,9 @@
 /*****************************************************************************
- * analyse.h: h264 encoder library
+ * mc.h: h264 encoder library (Motion Compensation)
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2009 x264 project
  *
- * Authors: Laurent Aimar <fenrir@via.ecp.fr>
- *          Loren Merritt <lorenm@u.washington.edu>
+ * Authors: David Conrad <lessen42@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +20,9 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
-#ifndef X264_ANALYSE_H
-#define X264_ANALYSE_H
+#ifndef X264_ARM_MC_H
+#define X264_ARM_MC_H
 
-int  x264_macroblock_analyse( x264_t *h );
-void x264_slicetype_decide( x264_t *h );
-int  x264_lowres_context_alloc( x264_t *h );
+void x264_mc_init_arm( int cpu, x264_mc_functions_t *pf );
 
 #endif

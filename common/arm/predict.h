@@ -1,10 +1,9 @@
 /*****************************************************************************
- * analyse.h: h264 encoder library
+ * predict.h: h264 encoder library
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2009 x264 project
  *
- * Authors: Laurent Aimar <fenrir@via.ecp.fr>
- *          Loren Merritt <lorenm@u.washington.edu>
+ * Authors: David Conrad
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,11 +20,12 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
-#ifndef X264_ANALYSE_H
-#define X264_ANALYSE_H
+#ifndef X264_ARM_PREDICT_H
+#define X264_ARM_PREDICT_H
 
-int  x264_macroblock_analyse( x264_t *h );
-void x264_slicetype_decide( x264_t *h );
-int  x264_lowres_context_alloc( x264_t *h );
+void x264_predict_4x4_init_arm( int cpu, x264_predict_t pf[12] );
+void x264_predict_8x8_init_arm( int cpu, x264_predict8x8_t pf[12], x264_predict_8x8_filter_t *predict_filter );
+void x264_predict_8x8c_init_arm( int cpu, x264_predict_t pf[7] );
+void x264_predict_16x16_init_arm( int cpu, x264_predict_t pf[7] );
 
 #endif

@@ -35,7 +35,7 @@
 
 #include <stdarg.h>
 
-#define X264_BUILD 72
+#define X264_BUILD 76
 
 /* x264_t:
  *      opaque handler for encoder */
@@ -139,6 +139,7 @@ static const char * const x264_colmatrix_names[] = { "GBR", "bt709", "undef", ""
 
 /* Threading */
 #define X264_THREADS_AUTO 0 /* Automatically select optimal number of threads */
+#define X264_SYNC_LOOKAHEAD_AUTO (-1) /* Automatically select optimal lookahead thread buffer size */
 
 /* Zones: override ratecontrol or other options for specific sections of the video.
  * See x264_encoder_reconfig() for which options can be changed.
@@ -158,6 +159,7 @@ typedef struct x264_param_t
     unsigned int cpu;
     int         i_threads;       /* encode multiple frames in parallel */
     int         b_deterministic; /* whether to allow non-deterministic optimizations when threaded */
+    int         i_sync_lookahead; /* threaded lookahead buffer */
 
     /* Video Properties */
     int         i_width;
@@ -296,7 +298,14 @@ typedef struct x264_param_t
     /* Muxing parameters */
     int b_aud;                  /* generate access unit delimiters */
     int b_repeat_headers;       /* put SPS/PPS before each keyframe */
+    int b_annexb;               /* if set, place start codes (4 bytes) before NAL units,
+                                 * otherwise place size (4 bytes) before NAL units. */
     int i_sps_id;               /* SPS and PPS id number */
+
+    /* Slicing parameters */
+    int i_slice_max_size;    /* Max size per slice in bytes; includes estimated NAL overhead. */
+    int i_slice_max_mbs;     /* Max number of MBs per slice; overrides i_slice_count. */
+    int i_slice_count;       /* Number of slices per frame: forces rectangular slices. */
 
     /* Optional callback for freeing this x264_param_t when it is done being used.
      * Only used when the x264_param_t sits in memory for an indefinite period of time,
@@ -411,40 +420,57 @@ enum nal_priority_e
     NAL_PRIORITY_HIGHEST    = 3,
 };
 
+/* The data within the payload is already NAL-encapsulated; the ref_idc and type
+ * are merely in the struct for easy access by the calling application.
+ * All data returned in an x264_nal_t, including the data in p_payload, is no longer
+ * valid after the next call to x264_encoder_encode.  Thus it must be used or copied
+ * before calling x264_encoder_encode or x264_encoder_headers again. */
 typedef struct
 {
     int i_ref_idc;  /* nal_priority_e */
     int i_type;     /* nal_unit_type_e */
 
-    /* This data are raw payload */
+    /* Size of payload in bytes. */
     int     i_payload;
+    /* If param->b_annexb is set, Annex-B bytestream with 4-byte startcode.
+     * Otherwise, startcode is replaced with a 4-byte size.
+     * This size is the size used in mp4/similar muxing; it is equal to i_payload-4 */
     uint8_t *p_payload;
 } x264_nal_t;
-
-/* x264_nal_encode:
- *      encode a nal into a buffer, setting the size.
- *      if b_annexeb then a long synch work is added
- *      XXX: it currently doesn't check for overflow */
-int x264_nal_encode( void *, int *, int b_annexeb, x264_nal_t *nal );
 
 /****************************************************************************
  * Encoder functions:
  ****************************************************************************/
 
+/* Force a link error in the case of linking against an incompatible API version.
+ * Glue #defines exist to force correct macro expansion; the final output of the macro
+ * is x264_encoder_open_##X264_BUILD (for purposes of dlopen). */
+#define x264_encoder_glue1(x,y) x##y
+#define x264_encoder_glue2(x,y) x264_encoder_glue1(x,y)
+#define x264_encoder_open x264_encoder_glue2(x264_encoder_open_,X264_BUILD)
+
 /* x264_encoder_open:
  *      create a new encoder handler, all parameters from x264_param_t are copied */
-x264_t *x264_encoder_open   ( x264_param_t * );
+x264_t *x264_encoder_open( x264_param_t * );
+
 /* x264_encoder_reconfig:
  *      analysis-related parameters from x264_param_t are copied.
  *      this takes effect immediately, on whichever frame is encoded next;
  *      due to delay, this may not be the next frame passed to encoder_encode.
- *      if the change should apply to some particular frame, use x264_picture_t->param instead. */
+ *      if the change should apply to some particular frame, use x264_picture_t->param instead.
+ *      returns 0 on success, negative on parameter validation error. */
 int     x264_encoder_reconfig( x264_t *, x264_param_t * );
 /* x264_encoder_headers:
- *      return the SPS and PPS that will be used for the whole stream */
+ *      return the SPS and PPS that will be used for the whole stream.
+ *      if i_nal > 0, returns the total size of all NAL payloads.
+ *      returns negative on error.
+ *      the payloads of all output NALs are guaranteed to be sequential in memory. */
 int     x264_encoder_headers( x264_t *, x264_nal_t **, int * );
 /* x264_encoder_encode:
- *      encode one picture */
+ *      encode one picture.
+ *      if i_nal > 0, returns the total size of all NAL payloads.
+ *      returns negative on error, zero if no NAL units returned.
+ *      the payloads of all output NALs are guaranteed to be sequential in memory. */
 int     x264_encoder_encode ( x264_t *, x264_nal_t **, int *, x264_picture_t *, x264_picture_t * );
 /* x264_encoder_close:
  *      close an encoder handler */

@@ -45,6 +45,7 @@ void    x264_param_default( x264_param_t *param )
     param->cpu = x264_cpu_detect();
     param->i_threads = X264_THREADS_AUTO;
     param->b_deterministic = 1;
+    param->i_sync_lookahead = X264_SYNC_LOOKAHEAD_AUTO;
 
     /* Video properties */
     param->i_csp           = X264_CSP_I420;
@@ -62,6 +63,9 @@ void    x264_param_default( x264_param_t *param )
     param->i_fps_num       = 25;
     param->i_fps_den       = 1;
     param->i_level_idc     = -1;
+    param->i_slice_max_size = 0;
+    param->i_slice_max_mbs = 0;
+    param->i_slice_count = 0;
 
     /* Encoder parameters */
     param->i_frame_reference = 3;
@@ -147,6 +151,7 @@ void    x264_param_default( x264_param_t *param )
     memset( param->cqm_8py, 16, 64 );
 
     param->b_repeat_headers = 1;
+    param->b_annexb = 1;
     param->b_aud = 0;
 }
 
@@ -273,6 +278,13 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         else
             p->i_threads = atoi(value);
     }
+    OPT("sync-lookahead")
+    {
+        if( !strcmp(value, "auto") )
+            p->i_sync_lookahead = X264_SYNC_LOOKAHEAD_AUTO;
+        else
+            p->i_sync_lookahead = atoi(value);
+    }
     OPT2("deterministic", "n-deterministic")
         p->b_deterministic = atobool(value);
     OPT2("level", "level-idc")
@@ -370,6 +382,12 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         else
             p->b_deblocking_filter = atobool(value);
     }
+    OPT("slice-max-size")
+        p->i_slice_max_size = atoi(value);
+    OPT("slice-max-mbs")
+        p->i_slice_max_mbs = atoi(value);
+    OPT("slices")
+        p->i_slice_count = atoi(value);
     OPT("cabac")
         p->b_cabac = atobool(value);
     OPT("cabac-idc")
@@ -586,6 +604,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->b_repeat_headers = !atobool(value);
     OPT("repeat-headers")
         p->b_repeat_headers = atobool(value);
+    OPT("annexb")
+        p->b_annexb = atobool(value);
     else
         return X264_PARAM_BAD_NAME;
 #undef OPT
@@ -678,23 +698,23 @@ void x264_picture_clean( x264_picture_t *pic )
 /****************************************************************************
  * x264_nal_encode:
  ****************************************************************************/
-int x264_nal_encode( void *p_data, int *pi_data, int b_annexeb, x264_nal_t *nal )
+int x264_nal_encode( uint8_t *dst, int b_annexb, x264_nal_t *nal )
 {
-    uint8_t *dst = p_data;
     uint8_t *src = nal->p_payload;
-    uint8_t *end = &nal->p_payload[nal->i_payload];
-    int i_count = 0;
+    uint8_t *end = nal->p_payload + nal->i_payload;
+    uint8_t *orig_dst = dst;
+    int i_count = 0, size;
 
-    /* FIXME this code doesn't check overflow */
-
-    if( b_annexeb )
+    /* long nal start code (we always use long ones) */
+    if( b_annexb )
     {
-        /* long nal start code (we always use long ones)*/
         *dst++ = 0x00;
         *dst++ = 0x00;
         *dst++ = 0x00;
         *dst++ = 0x01;
     }
+    else /* save room for size later */
+        dst += 4;
 
     /* nal header */
     *dst++ = ( 0x00 << 7 ) | ( nal->i_ref_idc << 5 ) | nal->i_type;
@@ -712,9 +732,19 @@ int x264_nal_encode( void *p_data, int *pi_data, int b_annexeb, x264_nal_t *nal 
             i_count = 0;
         *dst++ = *src++;
     }
-    *pi_data = dst - (uint8_t*)p_data;
+    size = (dst - orig_dst) - 4;
 
-    return *pi_data;
+    /* Write the size header for mp4/etc */
+    if( !b_annexb )
+    {
+        /* Size doesn't include the size of the header we're writing now. */
+        orig_dst[0] = size>>24;
+        orig_dst[1] = size>>16;
+        orig_dst[2] = size>> 8;
+        orig_dst[3] = size>> 0;
+    }
+
+    return size+4;
 }
 
 
@@ -773,9 +803,9 @@ void x264_reduce_fraction( int *n, int *d )
     c = a % b;
     while(c)
     {
-	a = b;
-	b = c;
-	c = a % b;
+        a = b;
+        b = c;
+        c = a % b;
     }
     *n /= b;
     *d /= b;
@@ -851,6 +881,12 @@ char *x264_param2string( x264_param_t *p, int b_res )
     s += sprintf( s, " deadzone=%d,%d", p->analyse.i_luma_deadzone[0], p->analyse.i_luma_deadzone[1] );
     s += sprintf( s, " chroma_qp_offset=%d", p->analyse.i_chroma_qp_offset );
     s += sprintf( s, " threads=%d", p->i_threads );
+    if( p->i_slice_count )
+        s += sprintf( s, " slices=%d", p->i_slice_count );
+    if( p->i_slice_max_size )
+        s += sprintf( s, " slice_max_size=%d", p->i_slice_max_size );
+    if( p->i_slice_max_mbs )
+        s += sprintf( s, " slice_max_mbs=%d", p->i_slice_max_mbs );
     s += sprintf( s, " nr=%d", p->analyse.i_noise_reduction );
     s += sprintf( s, " decimate=%d", p->analyse.b_dct_decimate );
     s += sprintf( s, " mbaff=%d", p->b_interlaced );

@@ -24,9 +24,7 @@
 #include <math.h>
 
 #include "common/common.h"
-#ifndef _MSC_VER
 #include "config.h"
-#endif
 #include "set.h"
 
 #define bs_write_ue bs_write_ue_big
@@ -97,11 +95,9 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     sps->b_constraint_set2  = 0;
 
     sps->i_log2_max_frame_num = 4;  /* at least 4 */
-    while( (1 << sps->i_log2_max_frame_num) <= param->i_keyint_max )
-    {
+    while( (1 << sps->i_log2_max_frame_num) <= param->i_keyint_max && sps->i_log2_max_frame_num < 10 )
         sps->i_log2_max_frame_num++;
-    }
-    sps->i_log2_max_frame_num++;    /* just in case */
+    sps->i_log2_max_frame_num++;
 
     sps->i_poc_type = 0;
     if( sps->i_poc_type == 0 )
@@ -386,7 +382,7 @@ void x264_pps_init( x264_pps_t *pps, int i_id, x264_param_t *param, x264_sps_t *
 
     pps->i_chroma_qp_index_offset = param->analyse.i_chroma_qp_offset;
     pps->b_deblocking_filter_control = 1;
-    pps->b_constrained_intra_pred = 0;
+    pps->b_constrained_intra_pred = param->b_constrained_intra;
     pps->b_redundant_pic_cnt = 0;
 
     pps->b_transform_8x8_mode = param->analyse.b_transform_8x8 ? 1 : 0;

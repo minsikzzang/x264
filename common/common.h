@@ -165,9 +165,9 @@ extern const float x264_log2_lz_lut[32];
  * qp to qscale. */
 static ALWAYS_INLINE int x264_exp2fix8( float x )
 {
-    if( x >= 512.f/6.f ) return 0;
-    if( x <= -512.f/6.f ) return 0xffff;
-    int i = x*(-64.f/6.f) + 512;
+    int i = x*(-64.f/6.f) + 512.5f;
+    if( i < 0 ) return 0;
+    if( i > 1023 ) return 0xffff;
     return (x264_exp2_lut[i&63]+256) << (i>>6) >> 8;
 }
 
@@ -341,9 +341,9 @@ struct x264_t
     x264_pps_t      *pps;
     int             i_idr_pic_id;
 
-    /* quantization matrix for decoding, [cqm][qp%6][coef_y][coef_x] */
-    int             (*dequant4_mf[4])[4][4]; /* [4][6][4][4] */
-    int             (*dequant8_mf[2])[8][8]; /* [2][6][8][8] */
+    /* quantization matrix for decoding, [cqm][qp%6][coef] */
+    int             (*dequant4_mf[4])[16];   /* [4][6][16] */
+    int             (*dequant8_mf[2])[64];   /* [2][6][64] */
     /* quantization matrix for trellis, [cqm][qp][coef] */
     int             (*unquant4_mf[4])[16];   /* [4][52][16] */
     int             (*unquant8_mf[2])[64];   /* [2][52][64] */
@@ -461,6 +461,7 @@ struct x264_t
         unsigned int i_neighbour;
         unsigned int i_neighbour8[4];       /* neighbours of each 8x8 or 4x4 block that are available */
         unsigned int i_neighbour4[16];      /* at the time the block is coded */
+        unsigned int i_neighbour_intra;     /* for constrained intra pred */
         int     i_mb_type_top;
         int     i_mb_type_left;
         int     i_mb_type_topleft;

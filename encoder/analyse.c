@@ -24,9 +24,7 @@
 
 #define _ISOC99_SOURCE
 #include <math.h>
-#ifndef _MSC_VER
 #include <unistd.h>
-#endif
 
 #include "common/common.h"
 #include "common/cpu.h"
@@ -156,10 +154,10 @@ const int x264_lambda2_tab[52] = {
 };
 
 const uint8_t x264_exp2_lut[64] = {
-      1,   4,   7,  10,  13,  16,  19,  22,  25,  28,  31,  34,  37,  40,  44,  47,
-     50,  53,  57,  60,  64,  67,  71,  74,  78,  81,  85,  89,  93,  96, 100, 104,
-    108, 112, 116, 120, 124, 128, 132, 137, 141, 145, 150, 154, 159, 163, 168, 172,
-    177, 182, 186, 191, 196, 201, 206, 211, 216, 221, 226, 232, 237, 242, 248, 253,
+      0,   3,   6,   8,  11,  14,  17,  20,  23,  26,  29,  32,  36,  39,  42,  45,
+     48,  52,  55,  58,  62,  65,  69,  72,  76,  80,  83,  87,  91,  94,  98, 102,
+    106, 110, 114, 118, 122, 126, 130, 135, 139, 143, 147, 152, 156, 161, 165, 170,
+    175, 179, 184, 189, 194, 198, 203, 208, 214, 219, 224, 229, 234, 240, 245, 250
 };
 
 const float x264_log2_lut[128] = {
@@ -594,8 +592,8 @@ static void predict_4x4_mode_available( unsigned int i_neighbour,
 /* For trellis=2, we need to do this for both sizes of DCT, for trellis=1 we only need to use it on the chosen mode. */
 static void inline x264_psy_trellis_init( x264_t *h, int do_both_dct )
 {
-    ALIGNED_ARRAY_16( int16_t, dct8x8,[4],[8][8] );
-    ALIGNED_ARRAY_16( int16_t, dct4x4,[16],[4][4] );
+    ALIGNED_ARRAY_16( int16_t, dct8x8,[4],[64] );
+    ALIGNED_ARRAY_16( int16_t, dct4x4,[16],[16] );
     ALIGNED_16( static uint8_t zero[16*FDEC_STRIDE] ) = {0};
     int i;
 
@@ -662,7 +660,7 @@ static void x264_mb_analyse_intra_chroma( x264_t *h, x264_mb_analysis_t *a )
     p_srcc[0] = h->mb.pic.p_fenc[1];
     p_srcc[1] = h->mb.pic.p_fenc[2];
 
-    predict_8x8chroma_mode_available( h->mb.i_neighbour, predict_mode, &i_max );
+    predict_8x8chroma_mode_available( h->mb.i_neighbour_intra, predict_mode, &i_max );
     a->i_satd_i8x8chroma = COST_MAX;
     if( i_max == 4 && b_merged_satd )
     {
@@ -731,7 +729,7 @@ static void x264_mb_analyse_intra( x264_t *h, x264_mb_analysis_t *a, int i_satd_
     /*---------------- Try all mode and calculate their score ---------------*/
 
     /* 16x16 prediction selection */
-    predict_16x16_mode_available( h->mb.i_neighbour, predict_mode, &i_max );
+    predict_16x16_mode_available( h->mb.i_neighbour_intra, predict_mode, &i_max );
 
     if( b_merged_satd && i_max == 4 )
     {
@@ -996,7 +994,7 @@ static void x264_intra_rd_refine( x264_t *h, x264_mb_analysis_t *a )
         int old_pred_mode = a->i_predict16x16;
         i_thresh = a->i_satd_i16x16_dir[old_pred_mode] * 9/8;
         i_best = a->i_satd_i16x16;
-        predict_16x16_mode_available( h->mb.i_neighbour, predict_mode, &i_max );
+        predict_16x16_mode_available( h->mb.i_neighbour_intra, predict_mode, &i_max );
         for( i = 0; i < i_max; i++ )
         {
             int i_mode = predict_mode[i];
@@ -1009,7 +1007,7 @@ static void x264_intra_rd_refine( x264_t *h, x264_mb_analysis_t *a )
     }
 
     /* RD selection for chroma prediction */
-    predict_8x8chroma_mode_available( h->mb.i_neighbour, predict_mode, &i_max );
+    predict_8x8chroma_mode_available( h->mb.i_neighbour_intra, predict_mode, &i_max );
     if( i_max > 1 )
     {
         i_thresh = a->i_satd_i8x8chroma * 5/4;
@@ -1308,8 +1306,10 @@ static void x264_mb_analyse_inter_p8x8_mixed_ref( x264_t *h, x264_mb_analysis_t 
         x264_macroblock_cache_mv_ptr( h, 2*x8, 2*y8, 2, 2, 0, l0m->mv );
         x264_macroblock_cache_ref( h, 2*x8, 2*y8, 2, 2, 0, l0m->i_ref );
 
-        /* mb type cost */
-        l0m->cost += a->i_lambda * i_sub_mb_p_cost_table[D_L0_8x8];
+        /* If CABAC is on and we're not doing sub-8x8 analysis, the costs
+           are effectively zero. */
+        if( !h->param.b_cabac || (h->param.analyse.inter & X264_ANALYSE_PSUB8x8) )
+            l0m->cost += a->i_lambda * i_sub_mb_p_cost_table[D_L0_8x8];
     }
 
     a->l0.i_cost8x8 = a->l0.me8x8[0].cost + a->l0.me8x8[1].cost +
@@ -1361,7 +1361,8 @@ static void x264_mb_analyse_inter_p8x8( x264_t *h, x264_mb_analysis_t *a )
 
         /* mb type cost */
         m->cost += i_ref_cost;
-        m->cost += a->i_lambda * i_sub_mb_p_cost_table[D_L0_8x8];
+        if( !h->param.b_cabac || (h->param.analyse.inter & X264_ANALYSE_PSUB8x8) )
+            m->cost += a->i_lambda * i_sub_mb_p_cost_table[D_L0_8x8];
     }
 
     a->l0.i_cost8x8 = a->l0.me8x8[0].cost + a->l0.me8x8[1].cost +

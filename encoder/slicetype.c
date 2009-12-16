@@ -38,13 +38,21 @@ static void x264_lowres_context_init( x264_t *h, x264_mb_analysis_t *a )
     a->i_qp = X264_LOOKAHEAD_QP;
     a->i_lambda = x264_lambda_tab[ a->i_qp ];
     x264_mb_analyse_load_costs( h, a );
-    h->mb.i_me_method = X264_MIN( X264_ME_HEX, h->param.analyse.i_me_method ); // maybe dia?
-    h->mb.i_subpel_refine = 4; // 3 should be enough, but not tweaking for speed now
+    if( h->param.analyse.i_subpel_refine > 1 )
+    {
+        h->mb.i_me_method = X264_MIN( X264_ME_HEX, h->param.analyse.i_me_method );
+        h->mb.i_subpel_refine = 4;
+    }
+    else
+    {
+        h->mb.i_me_method = X264_ME_DIA;
+        h->mb.i_subpel_refine = 2;
+    }
     h->mb.b_chroma_me = 0;
 }
 
 /* makes a non-h264 weight (i.e. fix7), into an h264 weight */
-static void get_h264_weight( unsigned int weight_nonh264, int offset, x264_weight_t *w )
+static void x264_weight_get_h264( unsigned int weight_nonh264, int offset, x264_weight_t *w )
 {
     w->i_offset = offset;
     w->i_denom = 7;
@@ -56,33 +64,25 @@ static void get_h264_weight( unsigned int weight_nonh264, int offset, x264_weigh
     }
     w->i_scale = X264_MIN( w->i_scale, 127 );
 }
-/* due to a GCC bug on some platforms (win32), flat[16] may not actually be aligned. */
-ALIGNED_16( static uint8_t flat[17] ) = {0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1};
 
-static NOINLINE void weights_plane_analyse( x264_t *h, uint8_t *plane, int width, int height, int stride, unsigned int *sum, uint64_t *var )
+void x264_weight_plane_analyse( x264_t *h, x264_frame_t *frame )
 {
     int x,y;
-    unsigned int sad = 0;
+    uint32_t sad = 0;
     uint64_t ssd = 0;
-    uint8_t *p = plane;
+    uint8_t *p = frame->plane[0];
+    int stride = frame->i_stride[0];
+    int width = frame->i_width[0];
+    int height = frame->i_lines[0];
     for( y = 0; y < height>>4; y++, p += stride*16 )
-        for( x = 0; x < width; x+=16 )
+        for( x = 0; x < width; x += 16 )
         {
-            sad += h->pixf.sad_aligned[PIXEL_16x16]( p + x, stride, flat, 0 );
-            ssd += h->pixf.ssd[PIXEL_16x16]( p + x, stride, flat, 0 );
+            uint64_t res = h->pixf.var[PIXEL_16x16]( p + x, stride );
+            sad += (uint32_t)res;
+            ssd += res >> 32;
         }
-
-    *sum = sad;
-    *var = ssd - (uint64_t) sad * sad / (width * height);
-    x264_emms();
-}
-
-#define LOAD_HPELS_LUMA(dst, src) \
-{ \
-   (dst)[0] = &(src)[0][i_pel_offset]; \
-   (dst)[1] = &(src)[1][i_pel_offset]; \
-   (dst)[2] = &(src)[2][i_pel_offset]; \
-   (dst)[3] = &(src)[3][i_pel_offset]; \
+    frame->i_pixel_sum = sad;
+    frame->i_pixel_ssd = ssd - ((uint64_t)sad * sad + width * height / 2) / (width * height);
 }
 
 static NOINLINE uint8_t *x264_weight_cost_init_luma( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, uint8_t *dest )
@@ -92,23 +92,20 @@ static NOINLINE uint8_t *x264_weight_cost_init_luma( x264_t *h, x264_frame_t *fe
      * motion search has been done. */
     if( fenc->lowres_mvs[0][ref0_distance][0][0] != 0x7FFF )
     {
-        uint8_t *src[4];
         int i_stride = fenc->i_stride_lowres;
         int i_lines = fenc->i_lines_lowres;
         int i_width = fenc->i_width_lowres;
         int i_mb_xy = 0;
         int x,y;
-        int i_pel_offset = 0;
+        uint8_t *p = dest;
 
-        for( y = 0; y < i_lines; y += 8, i_pel_offset = y*i_stride )
-            for( x = 0; x < i_width; x += 8, i_mb_xy++, i_pel_offset += 8 )
+        for( y = 0; y < i_lines; y += 8, p += i_stride*8 )
+            for( x = 0; x < i_width; x += 8, i_mb_xy++ )
             {
-                uint8_t *pix = &dest[ i_pel_offset ];
                 int mvx = fenc->lowres_mvs[0][ref0_distance][i_mb_xy][0];
                 int mvy = fenc->lowres_mvs[0][ref0_distance][i_mb_xy][1];
-                LOAD_HPELS_LUMA( src, ref->lowres );
-                h->mc.mc_luma( pix, i_stride, src, i_stride,
-                               mvx, mvy, 8, 8, weight_none );
+                h->mc.mc_luma( p+x, i_stride, ref->lowres, i_stride,
+                               mvx+(x<<2), mvy+(y<<2), 8, 8, weight_none );
             }
         x264_emms();
         return dest;
@@ -116,7 +113,6 @@ static NOINLINE uint8_t *x264_weight_cost_init_luma( x264_t *h, x264_frame_t *fe
     x264_emms();
     return ref->lowres[0];
 }
-#undef LOAD_HPELS_LUMA
 
 static NOINLINE unsigned int x264_weight_cost( x264_t *h, x264_frame_t *fenc, uint8_t *src, x264_weight_t *w )
 {
@@ -126,24 +122,19 @@ static NOINLINE unsigned int x264_weight_cost( x264_t *h, x264_frame_t *fenc, ui
     int i_lines = fenc->i_lines_lowres;
     int i_width = fenc->i_width_lowres;
     uint8_t *fenc_plane = fenc->lowres[0];
-    ALIGNED_ARRAY_16( uint8_t, buf, [8*8] );
+    ALIGNED_8( uint8_t buf[8*8] );
     int pixoff = 0;
     int i_mb = 0;
 
     if( w )
+    {
         for( y = 0; y < i_lines; y += 8, pixoff = y*i_stride )
             for( x = 0; x < i_width; x += 8, i_mb++, pixoff += 8)
             {
                 w->weightfn[8>>2]( buf, 8, &src[pixoff], i_stride, w, 8 );
                 cost += X264_MIN( h->pixf.mbcmp[PIXEL_8x8]( buf, 8, &fenc_plane[pixoff], i_stride ), fenc->i_intra_cost[i_mb] );
             }
-    else
-        for( y = 0; y < i_lines; y += 8, pixoff = y*i_stride )
-            for( x = 0; x < i_width; x += 8, i_mb++, pixoff += 8 )
-                cost += X264_MIN( h->pixf.mbcmp[PIXEL_8x8]( &src[pixoff], i_stride, &fenc_plane[pixoff], i_stride ), fenc->i_intra_cost[i_mb] );
-
-    if( w )
-    {
+        /* Add cost of weights in the slice header. */
         int numslices;
         if( h->param.i_slice_count )
             numslices = h->param.i_slice_count;
@@ -151,45 +142,46 @@ static NOINLINE unsigned int x264_weight_cost( x264_t *h, x264_frame_t *fenc, ui
             numslices = (h->sps->i_mb_width * h->sps->i_mb_height + h->param.i_slice_max_mbs-1) / h->param.i_slice_max_mbs;
         else
             numslices = 1;
-        // FIXME still need to calculate for --slice-max-size
-        // Multiply by 2 as there will be a duplicate. 10 bits added as if there is a weighted frame, then an additional duplicate is used.
-        // Since using lowres frames, assume lambda = 1.
+        /* FIXME: find a way to account for --slice-max-size?
+         * Multiply by 2 as there will be a duplicate. 10 bits added as if there is a weighted frame, then an additional duplicate is used.
+         * Since using lowres frames, assume lambda = 1. */
         cost += numslices * ( 10 + 2 * ( bs_size_ue( w[0].i_denom ) + bs_size_se( w[0].i_scale ) + bs_size_se( w[0].i_offset ) ) );
     }
+    else
+        for( y = 0; y < i_lines; y += 8, pixoff = y*i_stride )
+            for( x = 0; x < i_width; x += 8, i_mb++, pixoff += 8 )
+                cost += X264_MIN( h->pixf.mbcmp[PIXEL_8x8]( &src[pixoff], i_stride, &fenc_plane[pixoff], i_stride ), fenc->i_intra_cost[i_mb] );
     x264_emms();
     return cost;
 }
 
 void x264_weights_analyse( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, int b_lookahead )
 {
-    unsigned int fenc_sum, ref_sum;
-    float fenc_mean, ref_mean;
-    uint64_t fenc_var, ref_var;
+    float fenc_mean, ref_mean, fenc_var, ref_var;
     int i_off, offset_search;
     int minoff, minscale, mindenom;
     unsigned int minscore, origscore;
     int i_delta_index = fenc->i_frame - ref->i_frame - 1;
     /* epsilon is chosen to require at least a numerator of 127 (with denominator = 128) */
     const float epsilon = 1.0/128.0;
-
     float guess_scale;
     int found;
     x264_weight_t *weights = fenc->weight[0];
 
-    weights_plane_analyse( h, fenc->plane[0], fenc->i_width[0], fenc->i_lines[0], fenc->i_stride[0], &fenc_sum, &fenc_var );
-    weights_plane_analyse( h, ref->plane[0], ref->i_width[0], ref->i_lines[0], ref->i_stride[0], &ref_sum, &ref_var );
-    fenc_var = round( sqrt( fenc_var ) );
-    ref_var = round( sqrt( ref_var ) );
-    fenc_mean = (float)fenc_sum / (fenc->i_lines[0] * fenc->i_width[0]);
-    ref_mean = (float)ref_sum / (fenc->i_lines[0] * fenc->i_width[0]);
+    fenc_var = round( sqrt( fenc->i_pixel_ssd ) );
+    ref_var  = round( sqrt(  ref->i_pixel_ssd ) );
+    fenc_mean = (float)fenc->i_pixel_sum / (fenc->i_lines[0] * fenc->i_width[0]);
+    ref_mean  = (float) ref->i_pixel_sum / (fenc->i_lines[0] * fenc->i_width[0]);
 
     //early termination
-
-    if( fabs( ref_mean - fenc_mean ) < 0.5 && fabsf( 1 - (float)fenc_var / ref_var ) < epsilon )
+    if( fabs( ref_mean - fenc_mean ) < 0.5 && fabs( 1 - fenc_var / ref_var ) < epsilon )
+    {
+        SET_WEIGHT( weights[0], 0, 1, 0, 0 );
         return;
+    }
 
-    guess_scale = ref_var ? (float)fenc_var/ref_var : 0;
-    get_h264_weight( round( guess_scale * 128 ), 0, &weights[0] );
+    guess_scale = ref_var ? fenc_var/ref_var : 0;
+    x264_weight_get_h264( round( guess_scale * 128 ), 0, &weights[0] );
 
     found = 0;
     mindenom = weights[0].i_denom;
@@ -207,7 +199,10 @@ void x264_weights_analyse( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, int
     origscore = minscore = x264_weight_cost( h, fenc, mcbuf, 0 );
 
     if( !minscore )
+    {
+        SET_WEIGHT( weights[0], 0, 1, 0, 0 );
         return;
+    }
 
     // This gives a slight improvement due to rounding errors but only tests
     // one offset on lookahead.
@@ -221,7 +216,8 @@ void x264_weights_analyse( x264_t *h, x264_frame_t *fenc, x264_frame_t *ref, int
     x264_emms();
 
     /* FIXME: More analysis can be done here on SAD vs. SATD termination. */
-    if( !found || (minscale == 1<<mindenom && minoff == 0) || minscore >= fenc->i_width[0] * fenc->i_lines[0] * 2 )
+    /* 0.2% termination derived experimentally to avoid weird weights in frames that are mostly intra. */
+    if( !found || (minscale == 1<<mindenom && minoff == 0) || (float)minscore / origscore > 0.998 )
     {
         SET_WEIGHT( weights[0], 0, 1, 0, 0 );
         return;
@@ -307,14 +303,25 @@ static int x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
     }
 #define TRY_BIDIR( mv0, mv1, penalty ) \
     { \
-        int stride1 = 16, stride2 = 16; \
-        uint8_t *src1, *src2; \
         int i_cost; \
-        src1 = h->mc.get_ref( pix1, &stride1, m[0].p_fref, m[0].i_stride[0], \
-                              (mv0)[0], (mv0)[1], 8, 8, w ); \
-        src2 = h->mc.get_ref( pix2, &stride2, m[1].p_fref, m[1].i_stride[0], \
-                              (mv1)[0], (mv1)[1], 8, 8, w ); \
-        h->mc.avg[PIXEL_8x8]( pix1, 16, src1, stride1, src2, stride2, i_bipred_weight ); \
+        if( h->param.analyse.i_subpel_refine <= 1 ) \
+        { \
+            int hpel_idx1 = (((mv0)[0]&2)>>1) + ((mv0)[1]&2); \
+            int hpel_idx2 = (((mv1)[0]&2)>>1) + ((mv1)[1]&2); \
+            uint8_t *src1 = m[0].p_fref[hpel_idx1] + ((mv0)[0]>>2) + ((mv0)[1]>>2) * m[0].i_stride[0]; \
+            uint8_t *src2 = m[1].p_fref[hpel_idx2] + ((mv1)[0]>>2) + ((mv1)[1]>>2) * m[1].i_stride[0]; \
+            h->mc.avg[PIXEL_8x8]( pix1, 16, src1, m[0].i_stride[0], src2, m[1].i_stride[0], i_bipred_weight ); \
+        } \
+        else \
+        { \
+            int stride1 = 16, stride2 = 16; \
+            uint8_t *src1, *src2; \
+            src1 = h->mc.get_ref( pix1, &stride1, m[0].p_fref, m[0].i_stride[0], \
+                                  (mv0)[0], (mv0)[1], 8, 8, w ); \
+            src2 = h->mc.get_ref( pix2, &stride2, m[1].p_fref, m[1].i_stride[0], \
+                                  (mv1)[0], (mv1)[1], 8, 8, w ); \
+            h->mc.avg[PIXEL_8x8]( pix1, 16, src1, stride1, src2, stride2, i_bipred_weight ); \
+        } \
         i_cost = penalty + h->pixf.mbcmp[PIXEL_8x8]( \
                            m[0].p_fenc[0], FENC_STRIDE, pix1, 16 ); \
         COPY2_IF_LT( i_bcost, i_cost, list_used, 3 ); \
@@ -325,6 +332,7 @@ static int x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
     m[0].i_stride[0] = i_stride;
     m[0].p_fenc[0] = h->mb.pic.p_fenc[0];
     m[0].weight = w;
+    m[0].i_ref = 0;
     LOAD_HPELS_LUMA( m[0].p_fref, fref0->lowres );
     m[0].p_fref_w = m[0].p_fref[0];
     if( w[0].weightfn )
@@ -333,10 +341,13 @@ static int x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
     if( b_bidir )
     {
         int16_t *mvr = fref1->lowres_mvs[0][p1-p0-1][i_mb_xy];
-        int dmv[2][2];
+        ALIGNED_8( int16_t dmv[2][2] );
 
-        h->mc.memcpy_aligned( &m[1], &m[0], sizeof(x264_me_t) );
-        m[1].i_ref = p1;
+        m[1].i_pixel = PIXEL_8x8;
+        m[1].p_cost_mv = a->p_cost_mv;
+        m[1].i_stride[0] = i_stride;
+        m[1].p_fenc[0] = h->mb.pic.p_fenc[0];
+        m[1].i_ref = 0;
         m[1].weight = weight_none;
         LOAD_HPELS_LUMA( m[1].p_fref, fref1->lowres );
         m[1].p_fref_w = m[1].p_fref[0];
@@ -347,9 +358,11 @@ static int x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
         dmv[1][1] = dmv[0][1] - mvr[1];
         CLIP_MV( dmv[0] );
         CLIP_MV( dmv[1] );
+        if( h->param.analyse.i_subpel_refine <= 1 )
+            M64( dmv ) &= ~0x0001000100010001ULL; /* mv & ~1 */
 
         TRY_BIDIR( dmv[0], dmv[1], 0 );
-        if( dmv[0][0] | dmv[0][1] | dmv[1][0] | dmv[1][1] )
+        if( M64( dmv ) )
         {
             int i_cost;
             h->mc.avg[PIXEL_8x8]( pix1, 16, m[0].p_fref[0], m[0].i_stride[0], m[1].p_fref[0], m[1].i_stride[0], i_bipred_weight );
@@ -418,7 +431,7 @@ lowres_intra_mb:
             uint8_t *pix = &pix1[8+FDEC_STRIDE - 1];
             uint8_t *src = &fenc->lowres[0][i_pel_offset - 1];
             const int intra_penalty = 5;
-            int satds[4];
+            int satds[3];
 
             memcpy( pix-FDEC_STRIDE, src-i_stride, 17 );
             for( i=0; i<8; i++ )
@@ -426,29 +439,30 @@ lowres_intra_mb:
             pix++;
 
             if( h->pixf.intra_mbcmp_x3_8x8c )
-            {
                 h->pixf.intra_mbcmp_x3_8x8c( h->mb.pic.p_fenc[0], pix, satds );
-                h->predict_8x8c[I_PRED_CHROMA_P]( pix );
-                satds[I_PRED_CHROMA_P] =
-                    h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
-            }
             else
             {
-                for( i=0; i<4; i++ )
+                for( i=0; i<3; i++ )
                 {
                     h->predict_8x8c[i]( pix );
                     satds[i] = h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
                 }
             }
-            i_icost = X264_MIN4( satds[0], satds[1], satds[2], satds[3] );
+            i_icost = X264_MIN3( satds[0], satds[1], satds[2] );
 
-            h->predict_8x8_filter( pix, edge, ALL_NEIGHBORS, ALL_NEIGHBORS );
-            for( i=3; i<9; i++ )
+            if( h->param.analyse.i_subpel_refine > 1 )
             {
-                int satd;
-                h->predict_8x8[i]( pix, edge );
-                satd = h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
+                h->predict_8x8c[I_PRED_CHROMA_P]( pix );
+                int satd = h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
                 i_icost = X264_MIN( i_icost, satd );
+                h->predict_8x8_filter( pix, edge, ALL_NEIGHBORS, ALL_NEIGHBORS );
+                for( i=3; i<9; i++ )
+                {
+                    int satd;
+                    h->predict_8x8[i]( pix, edge );
+                    satd = h->pixf.mbcmp[PIXEL_8x8]( pix, FDEC_STRIDE, h->mb.pic.p_fenc[0], FENC_STRIDE );
+                    i_icost = X264_MIN( i_icost, satd );
+                }
             }
 
             i_icost += intra_penalty;
@@ -515,6 +529,7 @@ static int x264_slicetype_frame_cost( x264_t *h, x264_mb_analysis_t *a,
             if( ( h->param.analyse.i_weighted_pred == X264_WEIGHTP_SMART
                   || h->param.analyse.i_weighted_pred == X264_WEIGHTP_FAKE ) && b == p1 )
             {
+                x264_emms();
                 x264_weights_analyse( h, frames[b], frames[p0], 1 );
                 w = frames[b]->weight[0];
             }
@@ -645,7 +660,7 @@ static void x264_macroblock_tree_finish( x264_t *h, x264_frame_t *frame, int ref
     }
 }
 
-static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, int p0, int p1, int b )
+static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, int p0, int p1, int b, int referenced )
 {
     uint16_t *ref_costs[2] = {frames[p0]->i_propagate_cost,frames[p1]->i_propagate_cost};
     int dist_scale_factor = ( ((b-p0) << 8) + ((p1-p0) >> 1) ) / (p1-p0);
@@ -653,13 +668,20 @@ static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, in
     int16_t (*mvs[2])[2] = { frames[b]->lowres_mvs[0][b-p0-1], frames[b]->lowres_mvs[1][p1-b-1] };
     int bipred_weights[2] = {i_bipred_weight, 64 - i_bipred_weight};
     int *buf = h->scratch_buffer;
+    uint16_t *propagate_cost = frames[b]->i_propagate_cost;
+
+    /* For non-reffed frames the source costs are always zero, so just memset one row and re-use it. */
+    if( !referenced )
+        memset( frames[b]->i_propagate_cost, 0, h->sps->i_mb_width * sizeof(uint16_t) );
 
     for( h->mb.i_mb_y = 0; h->mb.i_mb_y < h->sps->i_mb_height; h->mb.i_mb_y++ )
     {
         int mb_index = h->mb.i_mb_y*h->mb.i_mb_stride;
-        h->mc.mbtree_propagate_cost( buf, frames[b]->i_propagate_cost+mb_index,
+        h->mc.mbtree_propagate_cost( buf, propagate_cost,
             frames[b]->i_intra_cost+mb_index, frames[b]->lowres_costs[b-p0][p1-b]+mb_index,
             frames[b]->i_inv_qscale_factor+mb_index, h->sps->i_mb_width );
+        if( referenced )
+            propagate_cost += h->sps->i_mb_width;
         for( h->mb.i_mb_x = 0; h->mb.i_mb_x < h->sps->i_mb_width; h->mb.i_mb_x++, mb_index++ )
         {
             int propagate_amount = buf[h->mb.i_mb_x];
@@ -720,14 +742,15 @@ static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, in
         }
     }
 
-    if( h->param.rc.i_vbv_buffer_size && b == p1 )
-        x264_macroblock_tree_finish( h, frames[b], b-p0 );
+    if( h->param.rc.i_vbv_buffer_size && referenced )
+        x264_macroblock_tree_finish( h, frames[b], b == p1 ? b - p0 : 0 );
 }
 
 static void x264_macroblock_tree( x264_t *h, x264_mb_analysis_t *a, x264_frame_t **frames, int num_frames, int b_intra )
 {
     int i, idx = !b_intra;
     int last_nonb, cur_nonb = 1;
+    int bframes = 0;
     if( b_intra )
         x264_slicetype_frame_cost( h, a, frames, 0, 0, 0, 0 );
 
@@ -749,18 +772,41 @@ static void x264_macroblock_tree( x264_t *h, x264_mb_analysis_t *a, x264_frame_t
             break;
         x264_slicetype_frame_cost( h, a, frames, cur_nonb, last_nonb, last_nonb, 0 );
         memset( frames[cur_nonb]->i_propagate_cost, 0, h->mb.i_mb_count * sizeof(uint16_t) );
-        while( i > cur_nonb )
+        bframes = last_nonb - cur_nonb - 1;
+        if( h->param.i_bframe_pyramid && bframes > 1 )
         {
-            x264_slicetype_frame_cost( h, a, frames, cur_nonb, last_nonb, i, 0 );
-            memset( frames[i]->i_propagate_cost, 0, h->mb.i_mb_count * sizeof(uint16_t) );
-            x264_macroblock_tree_propagate( h, frames, cur_nonb, last_nonb, i );
-            i--;
+            int middle = (bframes + 1)/2 + cur_nonb;
+            x264_slicetype_frame_cost( h, a, frames, cur_nonb, last_nonb, middle, 0 );
+            memset( frames[middle]->i_propagate_cost, 0, h->mb.i_mb_count * sizeof(uint16_t) );
+            while( i > cur_nonb )
+            {
+                int p0 = i > middle ? middle : cur_nonb;
+                int p1 = i < middle ? middle : last_nonb;
+                if( i != middle )
+                {
+                    x264_slicetype_frame_cost( h, a, frames, p0, p1, i, 0 );
+                    x264_macroblock_tree_propagate( h, frames, p0, p1, i, 0 );
+                }
+                i--;
+            }
+            x264_macroblock_tree_propagate( h, frames, cur_nonb, last_nonb, middle, 1 );
         }
-        x264_macroblock_tree_propagate( h, frames, cur_nonb, last_nonb, last_nonb );
+        else
+        {
+            while( i > cur_nonb )
+            {
+                x264_slicetype_frame_cost( h, a, frames, cur_nonb, last_nonb, i, 0 );
+                x264_macroblock_tree_propagate( h, frames, cur_nonb, last_nonb, i, 0 );
+                i--;
+            }
+        }
+        x264_macroblock_tree_propagate( h, frames, cur_nonb, last_nonb, last_nonb, 1 );
         last_nonb = cur_nonb;
     }
 
     x264_macroblock_tree_finish( h, frames[last_nonb], last_nonb );
+    if( h->param.i_bframe_pyramid && bframes > 1 && !h->param.rc.i_vbv_buffer_size )
+        x264_macroblock_tree_finish( h, frames[last_nonb+(bframes+1)/2], 0 );
 }
 
 static int x264_vbv_frame_cost( x264_t *h, x264_mb_analysis_t *a, x264_frame_t **frames, int p0, int p1, int b )
@@ -830,8 +876,18 @@ static int x264_slicetype_path_cost( x264_t *h, x264_mb_analysis_t *a, x264_fram
         if( cost > threshold )
             break;
 
-        for( next_b = loc; next_b < next_p && cost < threshold; next_b++ )
-            cost += x264_slicetype_frame_cost( h, a, frames, cur_p, next_p, next_b, 0 );
+        if( h->param.i_bframe_pyramid && next_p - cur_p > 2 )
+        {
+            int middle = cur_p + (next_p - cur_p)/2;
+            cost += x264_slicetype_frame_cost( h, a, frames, cur_p, next_p, middle, 0 );
+            for( next_b = loc; next_b < middle && cost < threshold; next_b++ )
+                cost += x264_slicetype_frame_cost( h, a, frames, cur_p, middle, next_b, 0 );
+            for( next_b = middle+1; next_b < next_p && cost < threshold; next_b++ )
+                cost += x264_slicetype_frame_cost( h, a, frames, middle, next_p, next_b, 0 );
+        }
+        else
+            for( next_b = loc; next_b < next_p && cost < threshold; next_b++ )
+                cost += x264_slicetype_frame_cost( h, a, frames, cur_p, next_p, next_b, 0 );
 
         loc = next_p + 1;
         cur_p = next_p;
@@ -1264,7 +1320,10 @@ void x264_slicetype_decide( x264_t *h )
     /* Analyse for weighted P frames */
     if( !h->param.rc.b_stat_read && h->lookahead->next.list[bframes]->i_type == X264_TYPE_P
         && h->param.analyse.i_weighted_pred == X264_WEIGHTP_SMART )
+    {
+        x264_emms();
         x264_weights_analyse( h, h->lookahead->next.list[bframes], h->lookahead->last_nonb, 0 );
+    }
 
     /* shift sequence to coded order.
        use a small temporary list to avoid shifting the entire next buffer around */

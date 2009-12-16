@@ -79,13 +79,13 @@ do {\
 #include <assert.h>
 #include <limits.h>
 
-/* Unions for type-punning without aliasing violations.
+/* Unions for type-punning.
  * Mn: load or store n bits, aligned, native-endian
  * CPn: copy n bits, aligned, native-endian
  * we don't use memcpy for CPn because memcpy's args aren't assumed to be aligned */
-typedef union { uint16_t i; uint8_t  c[2]; } x264_union16_t;
-typedef union { uint32_t i; uint16_t b[2]; uint8_t  c[4]; } x264_union32_t;
-typedef union { uint64_t i; uint32_t a[2]; uint16_t b[4]; uint8_t c[8]; } x264_union64_t;
+typedef union { uint16_t i; uint8_t  c[2]; } MAY_ALIAS x264_union16_t;
+typedef union { uint32_t i; uint16_t b[2]; uint8_t  c[4]; } MAY_ALIAS x264_union32_t;
+typedef union { uint64_t i; uint32_t a[2]; uint16_t b[4]; uint8_t c[8]; } MAY_ALIAS x264_union64_t;
 #define M16(src) (((x264_union16_t*)(src))->i)
 #define M32(src) (((x264_union32_t*)(src))->i)
 #define M64(src) (((x264_union64_t*)(src))->i)
@@ -256,7 +256,7 @@ typedef struct
     } ref_pic_list_order[2][16];
 
     /* P-frame weighting */
-    x264_weight_t weight[16][3];
+    x264_weight_t weight[32][3];
 
     int i_mmco_remove_from_end;
     int i_mmco_command_count;
@@ -341,6 +341,8 @@ struct x264_t
     x264_pthread_t  thread_handle;
     int             b_thread_active;
     int             i_thread_phase; /* which thread to use for the next frame */
+    int             i_threadslice_start; /* first row in this thread slice */
+    int             i_threadslice_end; /* row after the end of this thread slice */
 
     /* bitstream output */
     struct
@@ -651,7 +653,8 @@ struct x264_t
 
         /* B_direct and weighted prediction */
         int16_t dist_scale_factor[16][2];
-        int16_t bipred_weight[32][4];
+        int8_t bipred_weight_buf[2][32][4];
+        int8_t (*bipred_weight)[4];
         /* maps fref1[0]'s ref indices into the current list0 */
 #define map_col_to_list0(col) h->mb.map_col_to_list0[col+2]
         int8_t  map_col_to_list0[18];

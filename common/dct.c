@@ -607,11 +607,11 @@ static void zigzag_scan_4x4_frame( int16_t level[16], int16_t dct[16] )
 
 static void zigzag_scan_4x4_field( int16_t level[16], int16_t dct[16] )
 {
-    *(uint32_t*)level = *(uint32_t*)dct;
+    CP32( level, dct );
     ZIG(2,0,1) ZIG(3,2,0) ZIG(4,3,0) ZIG(5,1,1)
-    *(uint32_t*)(level+6) = *(uint32_t*)(dct+6);
-    *(uint64_t*)(level+8) = *(uint64_t*)(dct+8);
-    *(uint64_t*)(level+12) = *(uint64_t*)(dct+12);
+    CP32( level+6, dct+6 );
+    CP64( level+8, dct+8 );
+    CP64( level+12, dct+12 );
 }
 
 #undef ZIG
@@ -622,19 +622,19 @@ static void zigzag_scan_4x4_field( int16_t level[16], int16_t dct[16] )
     nz |= level[i];\
 }
 #define COPY4x4\
-    *(uint32_t*)(p_dst+0*FDEC_STRIDE) = *(uint32_t*)(p_src+0*FENC_STRIDE);\
-    *(uint32_t*)(p_dst+1*FDEC_STRIDE) = *(uint32_t*)(p_src+1*FENC_STRIDE);\
-    *(uint32_t*)(p_dst+2*FDEC_STRIDE) = *(uint32_t*)(p_src+2*FENC_STRIDE);\
-    *(uint32_t*)(p_dst+3*FDEC_STRIDE) = *(uint32_t*)(p_src+3*FENC_STRIDE);
+    CP32( p_dst+0*FDEC_STRIDE, p_src+0*FENC_STRIDE );\
+    CP32( p_dst+1*FDEC_STRIDE, p_src+1*FENC_STRIDE );\
+    CP32( p_dst+2*FDEC_STRIDE, p_src+2*FENC_STRIDE );\
+    CP32( p_dst+3*FDEC_STRIDE, p_src+3*FENC_STRIDE );
 #define COPY8x8\
-    *(uint64_t*)(p_dst+0*FDEC_STRIDE) = *(uint64_t*)(p_src+0*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+1*FDEC_STRIDE) = *(uint64_t*)(p_src+1*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+2*FDEC_STRIDE) = *(uint64_t*)(p_src+2*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+3*FDEC_STRIDE) = *(uint64_t*)(p_src+3*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+4*FDEC_STRIDE) = *(uint64_t*)(p_src+4*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+5*FDEC_STRIDE) = *(uint64_t*)(p_src+5*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+6*FDEC_STRIDE) = *(uint64_t*)(p_src+6*FENC_STRIDE);\
-    *(uint64_t*)(p_dst+7*FDEC_STRIDE) = *(uint64_t*)(p_src+7*FENC_STRIDE);
+    CP64( p_dst+0*FDEC_STRIDE, p_src+0*FENC_STRIDE );\
+    CP64( p_dst+1*FDEC_STRIDE, p_src+1*FENC_STRIDE );\
+    CP64( p_dst+2*FDEC_STRIDE, p_src+2*FENC_STRIDE );\
+    CP64( p_dst+3*FDEC_STRIDE, p_src+3*FENC_STRIDE );\
+    CP64( p_dst+4*FDEC_STRIDE, p_src+4*FENC_STRIDE );\
+    CP64( p_dst+5*FDEC_STRIDE, p_src+5*FENC_STRIDE );\
+    CP64( p_dst+6*FDEC_STRIDE, p_src+6*FENC_STRIDE );\
+    CP64( p_dst+7*FDEC_STRIDE, p_src+7*FENC_STRIDE );
 
 static int zigzag_sub_4x4_frame( int16_t level[16], const uint8_t *p_src, uint8_t *p_dst )
 {
@@ -720,7 +720,10 @@ void x264_zigzag_init( int cpu, x264_zigzag_function_t *pf, int b_interlaced )
         pf->sub_4x4ac  = zigzag_sub_4x4ac_field;
 #ifdef HAVE_MMX
         if( cpu&X264_CPU_MMXEXT )
+        {
             pf->scan_4x4 = x264_zigzag_scan_4x4_field_mmxext;
+            pf->scan_8x8 = x264_zigzag_scan_8x8_field_mmxext;
+        }
         if( cpu&X264_CPU_SSSE3 )
         {
             pf->sub_4x4  = x264_zigzag_sub_4x4_field_ssse3;

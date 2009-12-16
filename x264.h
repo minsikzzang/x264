@@ -35,7 +35,7 @@
 
 #include <stdarg.h>
 
-#define X264_BUILD 78
+#define X264_BUILD 80
 
 /* x264_t:
  *      opaque handler for encoder */
@@ -95,6 +95,9 @@ typedef struct x264_t x264_t;
 #define X264_B_ADAPT_NONE            0
 #define X264_B_ADAPT_FAST            1
 #define X264_B_ADAPT_TRELLIS         2
+#define X264_WEIGHTP_NONE            0
+#define X264_WEIGHTP_BLIND           1
+#define X264_WEIGHTP_SMART           2
 #define X264_B_PYRAMID_NONE          0
 #define X264_B_PYRAMID_STRICT        1
 #define X264_B_PYRAMID_NORMAL        2
@@ -162,6 +165,7 @@ typedef struct x264_param_t
     /* CPU flags */
     unsigned int cpu;
     int         i_threads;       /* encode multiple frames in parallel */
+    int         b_sliced_threads;  /* Whether to use slice-based threading. */
     int         b_deterministic; /* whether to allow non-deterministic optimizations when threaded */
     int         i_sync_lookahead; /* threaded lookahead buffer */
 
@@ -235,6 +239,7 @@ typedef struct x264_param_t
         unsigned int inter;     /* inter partitions */
 
         int          b_transform_8x8;
+        int          i_weighted_pred; /* weighting for P-frames */
         int          b_weighted_bipred; /* implicit weighting for B-frames */
         int          i_direct_mv_pred; /* spatial vs temporal mv prediction */
         int          i_chroma_qp_offset;
@@ -384,9 +389,11 @@ typedef struct
            of H.264 itself; in this case, the caller must force an IDR frame
            if it needs the changed parameter to apply immediately. */
     x264_param_t *param;
-
     /* In: raw data */
     x264_image_t img;
+    /* private user data. libx264 doesn't touch this,
+       not even copy it from input to output frames. */
+    void *opaque;
 } x264_picture_t;
 
 /* x264_picture_alloc:

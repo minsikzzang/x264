@@ -59,7 +59,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 #define COST_MV( mx, my )\
 {\
     int cost = h->pixf.fpelcmp[i_pixel]( p_fenc, FENC_STRIDE,\
-                   &p_fref[(my)*stride+(mx)], stride )\
+                   &p_fref_w[(my)*stride+(mx)], stride )\
              + BITS_MVD(mx,my);\
     COPY3_IF_LT( bcost, cost, bmx, mx, bmy, my );\
 }
@@ -67,7 +67,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 #define COST_MV_HPEL( mx, my ) \
 { \
     int stride2 = 16; \
-    uint8_t *src = h->mc.get_ref( pix, &stride2, m->p_fref, stride, mx, my, bw, bh ); \
+    uint8_t *src = h->mc.get_ref( pix, &stride2, m->p_fref, stride, mx, my, bw, bh, &m->weight[0] ); \
     int cost = h->pixf.fpelcmp[i_pixel]( p_fenc, FENC_STRIDE, src, stride2 ) \
              + p_cost_mvx[ mx ] + p_cost_mvy[ my ]; \
     COPY3_IF_LT( bpred_cost, cost, bpred_mx, mx, bpred_my, my ); \
@@ -75,7 +75,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 
 #define COST_MV_X3_DIR( m0x, m0y, m1x, m1y, m2x, m2y, costs )\
 {\
-    uint8_t *pix_base = p_fref + bmx + bmy*stride;\
+    uint8_t *pix_base = p_fref_w + bmx + bmy*stride;\
     h->pixf.fpelcmp_x3[i_pixel]( p_fenc,\
         pix_base + (m0x) + (m0y)*stride,\
         pix_base + (m1x) + (m1y)*stride,\
@@ -88,7 +88,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 
 #define COST_MV_X4_DIR( m0x, m0y, m1x, m1y, m2x, m2y, m3x, m3y, costs )\
 {\
-    uint8_t *pix_base = p_fref + bmx + bmy*stride;\
+    uint8_t *pix_base = p_fref_w + bmx + bmy*stride;\
     h->pixf.fpelcmp_x4[i_pixel]( p_fenc,\
         pix_base + (m0x) + (m0y)*stride,\
         pix_base + (m1x) + (m1y)*stride,\
@@ -103,7 +103,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 
 #define COST_MV_X4( m0x, m0y, m1x, m1y, m2x, m2y, m3x, m3y )\
 {\
-    uint8_t *pix_base = p_fref + omx + omy*stride;\
+    uint8_t *pix_base = p_fref_w + omx + omy*stride;\
     h->pixf.fpelcmp_x4[i_pixel]( p_fenc,\
         pix_base + (m0x) + (m0y)*stride,\
         pix_base + (m1x) + (m1y)*stride,\
@@ -123,9 +123,9 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
 #define COST_MV_X3_ABS( m0x, m0y, m1x, m1y, m2x, m2y )\
 {\
     h->pixf.fpelcmp_x3[i_pixel]( p_fenc,\
-        p_fref + (m0x) + (m0y)*stride,\
-        p_fref + (m1x) + (m1y)*stride,\
-        p_fref + (m2x) + (m2y)*stride,\
+        p_fref_w + (m0x) + (m0y)*stride,\
+        p_fref_w + (m1x) + (m1y)*stride,\
+        p_fref_w + (m2x) + (m2y)*stride,\
         stride, costs );\
     costs[0] += p_cost_mvx[(m0x)<<2]; /* no cost_mvy */\
     costs[1] += p_cost_mvx[(m1x)<<2];\
@@ -181,7 +181,7 @@ void x264_me_search_ref( x264_t *h, x264_me_t *m, int16_t (*mvc)[2], int i_mvc, 
     int bpred_mx = 0, bpred_my = 0, bpred_cost = COST_MAX;
     int omx, omy, pmx, pmy;
     uint8_t *p_fenc = m->p_fenc[0];
-    uint8_t *p_fref = m->p_fref[0];
+    uint8_t *p_fref_w = m->p_fref_w;
     ALIGNED_ARRAY_16( uint8_t, pix,[16*16] );
 
     int i, j;
@@ -211,7 +211,7 @@ void x264_me_search_ref( x264_t *h, x264_me_t *m, int16_t (*mvc)[2], int i_mvc, 
         COST_MV_HPEL( bmx, bmy );
         for( i = 0; i < i_mvc; i++ )
         {
-            if( *(uint32_t*)mvc[i] && (bmv - *(uint32_t*)mvc[i]) )
+            if( M32( mvc[i] ) && (bmv - M32( mvc[i] )) )
             {
                 int mx = x264_clip3( mvc[i][0], mv_x_min*4, mv_x_max*4 );
                 int my = x264_clip3( mvc[i][1], mv_y_min*4, mv_y_max*4 );
@@ -478,7 +478,7 @@ me_hex2:
                 else
                 {
                     int dir = 0;
-                    uint8_t *pix_base = p_fref + omx + (omy-4*i)*stride;
+                    uint8_t *pix_base = p_fref_w + omx + (omy-4*i)*stride;
                     int dy = i*stride;
 #define SADS(k,x0,y0,x1,y1,x2,y2,x3,y3)\
                     h->pixf.fpelcmp_x4[i_pixel]( p_fenc,\
@@ -587,7 +587,7 @@ me_hex2:
                 mvsad_t *mvsads = (mvsad_t *)(xs + ((width+15)&~15));
                 int nmvsad = 0, limit;
                 int sad_thresh = i_me_range <= 16 ? 10 : i_me_range <= 24 ? 11 : 12;
-                int bsad = h->pixf.sad[i_pixel]( p_fenc, FENC_STRIDE, p_fref+bmy*stride+bmx, stride )
+                int bsad = h->pixf.sad[i_pixel]( p_fenc, FENC_STRIDE, p_fref_w+bmy*stride+bmx, stride )
                          + BITS_MVD( bmx, bmy );
                 for( my = min_y; my <= max_y; my++ )
                 {
@@ -599,7 +599,7 @@ me_hex2:
                                                cost_fpel_mvx+min_x, xs, width, bsad*17/16 );
                     for( i=0; i<xn-2; i+=3 )
                     {
-                        uint8_t *ref = p_fref+min_x+my*stride;
+                        uint8_t *ref = p_fref_w+min_x+my*stride;
                         int sads[3];
                         h->pixf.sad_x3[i_pixel]( p_fenc, ref+xs[i], ref+xs[i+1], ref+xs[i+2], stride, sads );
                         for( j=0; j<3; j++ )
@@ -618,7 +618,7 @@ me_hex2:
                     for( ; i<xn; i++ )
                     {
                         int mx = min_x+xs[i];
-                        int sad = h->pixf.sad[i_pixel]( p_fenc, FENC_STRIDE, p_fref+mx+my*stride, stride )
+                        int sad = h->pixf.sad[i_pixel]( p_fenc, FENC_STRIDE, p_fref_w+mx+my*stride, stride )
                                 + cost_fpel_mvx[xs[i]];
                         if( sad < bsad*sad_thresh>>3 )
                         {
@@ -643,7 +643,7 @@ me_hex2:
                     {
                         /* mvsad_t is not guaranteed to be 8 bytes on all archs, so check before using explicit write-combining */
                         if( sizeof( mvsad_t ) == sizeof( uint64_t ) )
-                            *(uint64_t*)&mvsads[i] = *(uint64_t*)&mvsads[j];
+                            CP64( &mvsads[i], &mvsads[j] );
                         else
                             mvsads[i] = mvsads[j];
                         i += mvsads[j].sad <= sad_thresh;
@@ -659,7 +659,7 @@ me_hex2:
                     nmvsad--;
                     mvsads[bi] = mvsads[nmvsad];
                     if( sizeof( mvsad_t ) == sizeof( uint64_t ) )
-                        *(uint64_t*)&mvsads[bi] = *(uint64_t*)&mvsads[nmvsad];
+                        CP64( &mvsads[bi], &mvsads[nmvsad] );
                     else
                         mvsads[bi] = mvsads[nmvsad];
                 }
@@ -725,14 +725,14 @@ void x264_me_refine_qpel( x264_t *h, x264_me_t *m )
 
     if( m->i_pixel <= PIXEL_8x8 && h->sh.i_type == SLICE_TYPE_P )
         m->cost -= m->i_ref_cost;
-	
+
     refine_subpel( h, m, hpel, qpel, NULL, 1 );
 }
 
 #define COST_MV_SAD( mx, my ) \
 { \
     int stride = 16; \
-    uint8_t *src = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], mx, my, bw, bh ); \
+    uint8_t *src = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], mx, my, bw, bh, &m->weight[0] ); \
     int cost = h->pixf.fpelcmp[i_pixel]( m->p_fenc[0], FENC_STRIDE, src, stride ) \
              + p_cost_mvx[ mx ] + p_cost_mvy[ my ]; \
     COPY3_IF_LT( bcost, cost, bmx, mx, bmy, my ); \
@@ -742,17 +742,23 @@ void x264_me_refine_qpel( x264_t *h, x264_me_t *m )
 if( b_refine_qpel || (dir^1) != odir ) \
 { \
     int stride = 16; \
-    uint8_t *src = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], mx, my, bw, bh ); \
+    uint8_t *src = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], mx, my, bw, bh, &m->weight[0] ); \
     int cost = h->pixf.mbcmp_unaligned[i_pixel]( m->p_fenc[0], FENC_STRIDE, src, stride ) \
              + p_cost_mvx[ mx ] + p_cost_mvy[ my ]; \
     if( b_chroma_me && cost < bcost ) \
     { \
         h->mc.mc_chroma( pix[0], 8, m->p_fref[4], m->i_stride[1], mx, my + mvy_offset, bw/2, bh/2 ); \
+        if( m->weight[1].weightfn ) \
+            m->weight[1].weightfn[x264_pixel_size[i_pixel].w>>3]( pix[0], 8, pix[0], 8, \
+                                                                  &m->weight[1], x264_pixel_size[i_pixel].h>>1 ); \
         cost += h->pixf.mbcmp[i_pixel+3]( m->p_fenc[1], FENC_STRIDE, pix[0], 8 ); \
         if( cost < bcost ) \
         { \
             h->mc.mc_chroma( pix[0], 8, m->p_fref[5], m->i_stride[1], mx, my + mvy_offset, bw/2, bh/2 ); \
             cost += h->pixf.mbcmp[i_pixel+3]( m->p_fenc[2], FENC_STRIDE, pix[0], 8 ); \
+            if( m->weight[2].weightfn ) \
+                m->weight[2].weightfn[x264_pixel_size[i_pixel].w>>3]( pix[0], 8, pix[0], 8, \
+                                                                      &m->weight[2], x264_pixel_size[i_pixel].h>>1 ); \
         } \
     } \
     if( cost < bcost ) \
@@ -799,8 +805,8 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
         int costs[4];
         int stride = 32; // candidates are either all hpel or all qpel, so one stride is enough
         uint8_t *src0, *src1, *src2, *src3;
-        src0 = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], omx, omy-2, bw, bh+1 );
-        src2 = h->mc.get_ref( pix[1], &stride, m->p_fref, m->i_stride[0], omx-2, omy, bw+4, bh );
+        src0 = h->mc.get_ref( pix[0], &stride, m->p_fref, m->i_stride[0], omx, omy-2, bw, bh+1, &m->weight[0] );
+        src2 = h->mc.get_ref( pix[1], &stride, m->p_fref, m->i_stride[0], omx-2, omy, bw+4, bh, &m->weight[0] );
         src1 = src0 + stride;
         src3 = src2 + 1;
         h->pixf.fpelcmp_x4[i_pixel]( m->p_fenc[0], src0, src1, src2, src3, stride, costs );
@@ -863,7 +869,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
     int mvx = om##list##x+dx;\
     int mvy = om##list##y+dy;\
     stride##list[i] = bw;\
-    src##list[i] = h->mc.get_ref( pixy_buf[list][i], &stride##list[i], m->p_fref, m->i_stride[0], mvx, mvy, bw, bh ); \
+    src##list[i] = h->mc.get_ref( pixy_buf[list][i], &stride##list[i], m->p_fref, m->i_stride[0], mvx, mvy, bw, bh, weight_none ); \
     if( rd )\
     {\
         h->mc.mc_chroma( pixu_buf[list][i], 8, m->p_fref[4], m->i_stride[1], mvx, mvy + mv##list##y_offset, bw>>1, bh>>1 );\
@@ -968,8 +974,10 @@ static void ALWAYS_INLINE x264_me_refine_bidir( x264_t *h, x264_me_t *m0, x264_m
                     if( cost < bcost * SATD_THRESH )
                     {
                         bcost = X264_MIN( cost, bcost );
-                        *(uint32_t*)cache0_mv = *(uint32_t*)cache0_mv2 = pack16to32_mask(m0x,m0y);
-                        *(uint32_t*)cache1_mv = *(uint32_t*)cache1_mv2 = pack16to32_mask(m1x,m1y);
+                        M32( cache0_mv  ) = pack16to32_mask(m0x,m0y);
+                        M32( cache0_mv2 ) = pack16to32_mask(m0x,m0y);
+                        M32( cache1_mv  ) = pack16to32_mask(m1x,m1y);
+                        M32( cache1_mv2 ) = pack16to32_mask(m1x,m1y);
                         h->mc.avg[i_pixel+3]( pixu, FDEC_STRIDE, pixu_buf[0][i0], 8, pixu_buf[1][i1], 8, i_weight );
                         h->mc.avg[i_pixel+3]( pixv, FDEC_STRIDE, pixv_buf[0][i0], 8, pixv_buf[1][i1], 8, i_weight );
                         uint64_t costrd = x264_rd_cost_part( h, i_lambda2, i8*4, m0->i_pixel );
@@ -1017,9 +1025,8 @@ void x264_me_refine_bidir_rd( x264_t *h, x264_me_t *m0, x264_me_t *m1, int i_wei
 { \
     if( !avoid_mvp || !(mx == pmx && my == pmy) ) \
     { \
-        int stride = 16; \
-        uint8_t *src = h->mc.get_ref( pix, &stride, m->p_fref, m->i_stride[0], mx, my, bw*4, bh*4 ); \
-        dst = h->pixf.mbcmp_unaligned[i_pixel]( m->p_fenc[0], FENC_STRIDE, src, stride ) \
+        h->mc.mc_luma( pix, FDEC_STRIDE, m->p_fref, m->i_stride[0], mx, my, bw, bh, &m->weight[0] ); \
+        dst = h->pixf.mbcmp[i_pixel]( m->p_fenc[0], FENC_STRIDE, pix, FDEC_STRIDE ) \
             + p_cost_mvx[mx] + p_cost_mvy[my]; \
         COPY1_IF_LT( bsatd, dst ); \
     } \
@@ -1032,7 +1039,13 @@ void x264_me_refine_bidir_rd( x264_t *h, x264_me_t *m0, x264_me_t *m1, int i_wei
     if( satd <= bsatd * SATD_THRESH ) \
     { \
         uint64_t cost; \
-        *(uint32_t*)cache_mv = *(uint32_t*)cache_mv2 = pack16to32_mask(mx,my); \
+        M32( cache_mv  ) = pack16to32_mask(mx,my); \
+        M32( cache_mv2 ) = pack16to32_mask(mx,my); \
+        if( m->i_pixel <= PIXEL_8x8 )\
+        {\
+            h->mc.mc_chroma( pixu, FDEC_STRIDE, m->p_fref[4], m->i_stride[1], mx, my + mvy_offset, bw>>1, bh>>1 );\
+            h->mc.mc_chroma( pixv, FDEC_STRIDE, m->p_fref[5], m->i_stride[1], mx, my + mvy_offset, bw>>1, bh>>1 );\
+        }\
         cost = x264_rd_cost_part( h, i_lambda2, i4, m->i_pixel ); \
         COPY4_IF_LT( bcost, cost, bmx, mx, bmy, my, dir, do_dir?mdir:dir ); \
     } \
@@ -1045,22 +1058,28 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
     int16_t *cache_mv = h->mb.cache.mv[i_list][x264_scan8[i4]];
     int16_t *cache_mv2 = cache_mv + pixel_mv_offs[m->i_pixel];
     const uint16_t *p_cost_mvx, *p_cost_mvy;
-    const int bw = x264_pixel_size[m->i_pixel].w>>2;
-    const int bh = x264_pixel_size[m->i_pixel].h>>2;
+    const int bw = x264_pixel_size[m->i_pixel].w;
+    const int bh = x264_pixel_size[m->i_pixel].h;
     const int i_pixel = m->i_pixel;
+    const int mvy_offset = h->mb.b_interlaced & m->i_ref ? (h->mb.i_mb_y & 1)*4 - 2 : 0;
 
-    ALIGNED_ARRAY_16( uint8_t, pix,[16*16] );
     uint64_t bcost = COST_MAX64;
     int bmx = m->mv[0];
     int bmy = m->mv[1];
     int omx, omy, pmx, pmy, i, j;
     unsigned bsatd;
-    int satd = 0;
+    int satd;
     int dir = -2;
-    int satds[8];
+    int i8 = i4>>2;
+
+    uint8_t *pix  = &h->mb.pic.p_fdec[0][block_idx_xy_fdec[i4]];
+    uint8_t *pixu = &h->mb.pic.p_fdec[1][(i8>>1)*4*FDEC_STRIDE+(i8&1)*4];
+    uint8_t *pixv = &h->mb.pic.p_fdec[2][(i8>>1)*4*FDEC_STRIDE+(i8&1)*4];
+
+    h->mb.b_skip_mc = 1;
 
     if( m->i_pixel != PIXEL_16x16 && i4 != 0 )
-        x264_mb_predict_mv( h, i_list, i4, bw, m->mvp );
+        x264_mb_predict_mv( h, i_list, i4, bw>>2, m->mvp );
     pmx = m->mvp[0];
     pmy = m->mvp[1];
     p_cost_mvx = m->p_cost_mv - pmx;
@@ -1077,7 +1096,7 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
         && pmy >= h->mb.mv_min_spel[1] && pmy <= h->mb.mv_max_spel[1] )
     {
         COST_MV_SATD( pmx, pmy, satd, 0 );
-        COST_MV_RD( pmx, pmy, satd, 0,0 );
+        COST_MV_RD  ( pmx, pmy, satd, 0, 0 );
         /* The hex motion search is guaranteed to not repeat the center candidate,
          * so if pmv is chosen, set the "MV to avoid checking" to bmv instead. */
         if( bmx == pmx && bmy == pmy )
@@ -1089,14 +1108,20 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
 
     if( bmy < h->mb.mv_min_spel[1] + 3 ||
         bmy > h->mb.mv_max_spel[1] - 3 )
+    {
+        h->mb.b_skip_mc = 0;
         return;
+    }
 
     /* subpel hex search, same pattern as ME HEX. */
     dir = -2;
     omx = bmx;
     omy = bmy;
-    for( j=0; j<6; j++ ) COST_MV_SATD( omx + hex2[j+1][0], omy + hex2[j+1][1], satds[j], 1 );
-    for( j=0; j<6; j++ ) COST_MV_RD  ( omx + hex2[j+1][0], omy + hex2[j+1][1], satds[j], 1,j );
+    for( j=0; j<6; j++ )
+    {
+        COST_MV_SATD( omx + hex2[j+1][0], omy + hex2[j+1][1], satd, 1 );
+        COST_MV_RD  ( omx + hex2[j+1][0], omy + hex2[j+1][1], satd, 1, j );
+    }
 
     if( dir != -2 )
     {
@@ -1110,8 +1135,11 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
             dir = -2;
             omx = bmx;
             omy = bmy;
-            for( j=0; j<3; j++ ) COST_MV_SATD( omx + hex2[odir+j][0], omy + hex2[odir+j][1], satds[j], 1 );
-            for( j=0; j<3; j++ ) COST_MV_RD  ( omx + hex2[odir+j][0], omy + hex2[odir+j][1], satds[j], 1, odir-1+j );
+            for( j=0; j<3; j++ )
+            {
+                COST_MV_SATD( omx + hex2[odir+j][0], omy + hex2[odir+j][1], satd, 1 );
+                COST_MV_RD  ( omx + hex2[odir+j][0], omy + hex2[odir+j][1], satd, 1, odir-1+j );
+            }
             if( dir == -2 )
                 break;
         }
@@ -1120,12 +1148,16 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
     /* square refine, same pattern as ME HEX. */
     omx = bmx;
     omy = bmy;
-    for( i=0; i<8; i++ ) COST_MV_SATD( omx + square1[i+1][0], omy + square1[i+1][1], satds[i], 1 );
-    for( i=0; i<8; i++ ) COST_MV_RD  ( omx + square1[i+1][0], omy + square1[i+1][1], satds[i], 0,0 );
+    for( i=0; i<8; i++ )
+    {
+        COST_MV_SATD( omx + square1[i+1][0], omy + square1[i+1][1], satd, 1 );
+        COST_MV_RD  ( omx + square1[i+1][0], omy + square1[i+1][1], satd, 0, 0 );
+    }
 
     m->cost = bcost;
     m->mv[0] = bmx;
     m->mv[1] = bmy;
-    x264_macroblock_cache_mv ( h, block_idx_x[i4], block_idx_y[i4], bw, bh, i_list, pack16to32_mask(bmx, bmy) );
-    x264_macroblock_cache_mvd( h, block_idx_x[i4], block_idx_y[i4], bw, bh, i_list, pack16to32_mask(bmx - m->mvp[0], bmy - m->mvp[1]) );
+    x264_macroblock_cache_mv ( h, block_idx_x[i4], block_idx_y[i4], bw>>2, bh>>2, i_list, pack16to32_mask(bmx, bmy) );
+    x264_macroblock_cache_mvd( h, block_idx_x[i4], block_idx_y[i4], bw>>2, bh>>2, i_list, pack16to32_mask(bmx - m->mvp[0], bmy - m->mvp[1]) );
+    h->mb.b_skip_mc = 0;
 }

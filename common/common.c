@@ -136,6 +136,7 @@ void    x264_param_default( x264_param_t *param )
     param->analyse.i_chroma_qp_offset = 0;
     param->analyse.b_fast_pskip = 1;
     param->analyse.b_weighted_bipred = 1;
+    param->analyse.i_weighted_pred = X264_WEIGHTP_SMART;
     param->analyse.b_dct_decimate = 1;
     param->analyse.b_transform_8x8 = 1;
     param->analyse.i_trellis = 1;
@@ -280,6 +281,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         else
             p->i_threads = atoi(value);
     }
+    OPT("sliced-threads")
+        p->b_sliced_threads = atobool(value);
     OPT("sync-lookahead")
     {
         if( !strcmp(value, "auto") )
@@ -489,6 +492,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->analyse.b_transform_8x8 = atobool(value);
     OPT2("weightb", "weight-b")
         p->analyse.b_weighted_bipred = atobool(value);
+    OPT("weightp")
+        p->analyse.i_weighted_pred = atoi(value);
     OPT2("direct", "direct-pred")
         b_error |= parse_enum( value, x264_direct_pred_names, &p->analyse.i_direct_mv_pred );
     OPT("chroma-qp-offset")
@@ -883,8 +888,10 @@ char *x264_param2string( x264_param_t *p, int b_res )
     s += sprintf( s, " 8x8dct=%d", p->analyse.b_transform_8x8 );
     s += sprintf( s, " cqm=%d", p->i_cqm_preset );
     s += sprintf( s, " deadzone=%d,%d", p->analyse.i_luma_deadzone[0], p->analyse.i_luma_deadzone[1] );
+    s += sprintf( s, " fast_pskip=%d", p->analyse.b_fast_pskip );
     s += sprintf( s, " chroma_qp_offset=%d", p->analyse.i_chroma_qp_offset );
     s += sprintf( s, " threads=%d", p->i_threads );
+    s += sprintf( s, " sliced_threads=%d", p->b_sliced_threads );
     if( p->i_slice_count )
         s += sprintf( s, " slices=%d", p->i_slice_count );
     if( p->i_slice_max_size )
@@ -903,6 +910,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
                       p->i_bframe_pyramid, p->i_bframe_adaptive, p->i_bframe_bias,
                       p->analyse.i_direct_mv_pred, p->analyse.b_weighted_bipred );
     }
+    s += sprintf( s, " wpredp=%d", p->analyse.i_weighted_pred > 0 ? p->analyse.i_weighted_pred : 0 );
 
     s += sprintf( s, " keyint=%d keyint_min=%d scenecut=%d",
                   p->i_keyint_max, p->i_keyint_min, p->i_scenecut_threshold );

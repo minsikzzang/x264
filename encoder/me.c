@@ -536,7 +536,7 @@ me_hex2:
                     }
                 }
             } while( ++i <= i_me_range/4 );
-            if( bmy <= mv_y_max && bmy >= mv_y_min )
+            if( bmy <= mv_y_max && bmy >= mv_y_min && bmx <= mv_x_max && bmx >= mv_x_min )
                 goto me_hex2;
             break;
         }
@@ -652,12 +652,11 @@ me_hex2:
                 }
                 while( nmvsad > limit )
                 {
-                    int bsad = mvsads[0].sad;
                     int bi = 0;
                     for( i=1; i<nmvsad; i++ )
-                        COPY2_IF_GT( bsad, mvsads[i].sad, bi, i );
+                        if( mvsads[i].sad > mvsads[bi].sad )
+                            bi = i;
                     nmvsad--;
-                    mvsads[bi] = mvsads[nmvsad];
                     if( sizeof( mvsad_t ) == sizeof( uint64_t ) )
                         CP64( &mvsads[bi], &mvsads[nmvsad] );
                     else
@@ -727,6 +726,11 @@ void x264_me_refine_qpel( x264_t *h, x264_me_t *m )
         m->cost -= m->i_ref_cost;
 
     refine_subpel( h, m, hpel, qpel, NULL, 1 );
+}
+
+void x264_me_refine_qpel_refdupe( x264_t *h, x264_me_t *m, int *p_halfpel_thresh )
+{
+    refine_subpel( h, m, 0, X264_MIN( 2, subpel_iterations[h->mb.i_subpel_refine][3] ), p_halfpel_thresh, 0 );
 }
 
 #define COST_MV_SAD( mx, my ) \
@@ -843,7 +847,7 @@ static void refine_subpel( x264_t *h, x264_me_t *m, int hpel_iters, int qpel_ite
     bdir = -1;
     for( i = qpel_iters; i > 0; i-- )
     {
-        if( bmy <= h->mb.mv_min_spel[1] || bmy >= h->mb.mv_max_spel[1] )
+        if( bmy <= h->mb.mv_min_spel[1] || bmy >= h->mb.mv_max_spel[1] || bmx <= h->mb.mv_min_spel[0] || bmx >= h->mb.mv_max_spel[0] )
             break;
         odir = bdir;
         omx = bmx;
@@ -898,8 +902,8 @@ static void ALWAYS_INLINE x264_me_refine_bidir( x264_t *h, x264_me_t *m0, x264_m
     const uint16_t *p_cost_m1x = m1->p_cost_mv - m1->mvp[0];
     const uint16_t *p_cost_m1y = m1->p_cost_mv - m1->mvp[1];
     ALIGNED_ARRAY_16( uint8_t, pixy_buf,[2],[9][16*16] );
-    ALIGNED_8( uint8_t pixu_buf[2][9][8*8] );
-    ALIGNED_8( uint8_t pixv_buf[2][9][8*8] );
+    ALIGNED_ARRAY_8( uint8_t, pixu_buf,[2],[9][8*8] );
+    ALIGNED_ARRAY_8( uint8_t, pixv_buf,[2],[9][8*8] );
     uint8_t *src0[9];
     uint8_t *src1[9];
     uint8_t *pix  = &h->mb.pic.p_fdec[0][(i8>>1)*8*FDEC_STRIDE+(i8&1)*8];
@@ -936,7 +940,9 @@ static void ALWAYS_INLINE x264_me_refine_bidir( x264_t *h, x264_me_t *m0, x264_m
     };
 
     if( bm0y < h->mb.mv_min_spel[1] + 8 || bm1y < h->mb.mv_min_spel[1] + 8 ||
-        bm0y > h->mb.mv_max_spel[1] - 8 || bm1y > h->mb.mv_max_spel[1] - 8 )
+        bm0y > h->mb.mv_max_spel[1] - 8 || bm1y > h->mb.mv_max_spel[1] - 8 ||
+        bm0x < h->mb.mv_min_spel[0] + 8 || bm1x < h->mb.mv_min_spel[0] + 8 ||
+        bm0x > h->mb.mv_max_spel[0] - 8 || bm1x > h->mb.mv_max_spel[0] - 8 )
         return;
 
     h->mc.memzero_aligned( visited, sizeof(uint8_t[8][8][8]) );
@@ -1106,8 +1112,8 @@ void x264_me_refine_qpel_rd( x264_t *h, x264_me_t *m, int i_lambda2, int i4, int
         }
     }
 
-    if( bmy < h->mb.mv_min_spel[1] + 3 ||
-        bmy > h->mb.mv_max_spel[1] - 3 )
+    if( bmy < h->mb.mv_min_spel[1] + 3 || bmy > h->mb.mv_max_spel[1] - 3 ||
+        bmx < h->mb.mv_min_spel[0] + 3 || bmx > h->mb.mv_max_spel[0] - 3 )
     {
         h->mb.b_skip_mc = 0;
         return;

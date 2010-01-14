@@ -156,6 +156,7 @@ void    x264_param_default( x264_param_t *param )
     param->b_repeat_headers = 1;
     param->b_annexb = 1;
     param->b_aud = 0;
+    param->b_vfr_input = 1;
 }
 
 static int parse_enum( const char *arg, const char * const *names, int *dst )
@@ -355,6 +356,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
             p->i_scenecut_threshold = atoi(value);
         }
     }
+    OPT("intra-refresh")
+        p->b_intra_refresh = atobool(value);
     OPT("bframes")
         p->i_bframe = atoi(value);
     OPT("b-adapt")
@@ -615,6 +618,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->b_repeat_headers = atobool(value);
     OPT("annexb")
         p->b_annexb = atobool(value);
+    OPT("force-cfr")
+        p->b_vfr_input = !atobool(value);
     else
         return X264_PARAM_BAD_NAME;
 #undef OPT
@@ -912,8 +917,8 @@ char *x264_param2string( x264_param_t *p, int b_res )
     }
     s += sprintf( s, " wpredp=%d", p->analyse.i_weighted_pred > 0 ? p->analyse.i_weighted_pred : 0 );
 
-    s += sprintf( s, " keyint=%d keyint_min=%d scenecut=%d",
-                  p->i_keyint_max, p->i_keyint_min, p->i_scenecut_threshold );
+    s += sprintf( s, " keyint=%d keyint_min=%d scenecut=%d intra_refresh=%d",
+                  p->i_keyint_max, p->i_keyint_min, p->i_scenecut_threshold, p->b_intra_refresh );
 
     if( p->rc.b_mb_tree || p->rc.i_vbv_buffer_size )
         s += sprintf( s, " rc_lookahead=%d", p->rc.i_lookahead );

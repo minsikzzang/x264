@@ -180,12 +180,12 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     }
 
     sps->vui.b_timing_info_present = 0;
-    if( param->i_fps_num > 0 && param->i_fps_den > 0)
+    if( param->i_timebase_num > 0 && param->i_timebase_den > 0 )
     {
         sps->vui.b_timing_info_present = 1;
-        sps->vui.i_num_units_in_tick = param->i_fps_den;
-        sps->vui.i_time_scale = param->i_fps_num * 2;
-        sps->vui.b_fixed_frame_rate = 1;
+        sps->vui.i_num_units_in_tick = param->i_timebase_num;
+        sps->vui.i_time_scale = param->i_timebase_den * 2;
+        sps->vui.b_fixed_frame_rate = !param->b_vfr_input;
     }
 
     sps->vui.i_num_reorder_frames = param->i_bframe_pyramid ? 2 : param->i_bframe ? 1 : 0;
@@ -464,6 +464,23 @@ void x264_pps_write( bs_t *s, x264_pps_t *pps )
         bs_write_se( s, pps->i_chroma_qp_index_offset );
     }
 
+    bs_rbsp_trailing( s );
+}
+
+void x264_sei_recovery_point_write( x264_t *h, bs_t *s, int recovery_frame_cnt )
+{
+    int payload_size;
+
+    bs_write( s, 8, 0x06 ); // payload_type = Recovery Point
+    payload_size = bs_size_ue( recovery_frame_cnt ) + 4;
+
+    bs_write( s, 8, (payload_size + 7) / 8);
+    bs_write_ue( s, recovery_frame_cnt ); // recovery_frame_cnt
+    bs_write( s, 1, 1 ); //exact_match_flag 1
+    bs_write( s, 1, 0 ); //broken_link_flag 0
+    bs_write( s, 2, 0 ); //changing_slice_group 0
+
+    bs_align_10( s );
     bs_rbsp_trailing( s );
 }
 

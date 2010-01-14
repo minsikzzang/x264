@@ -285,7 +285,7 @@ typedef struct x264_lookahead_t
     volatile uint8_t              b_exit_thread;
     uint8_t                       b_thread_active;
     uint8_t                       b_analyse_keyframe;
-    int                           i_last_idr;
+    int                           i_last_keyframe;
     int                           i_slicetype_length;
     x264_frame_t                  *last_nonb;
     x264_synch_frame_list_t       ifbuf;
@@ -423,7 +423,7 @@ struct x264_t
         /* frames used for reference + sentinels */
         x264_frame_t *reference[16+2];
 
-        int i_last_idr; /* Frame number of the last IDR */
+        int i_last_keyframe; /* Frame number of the last keyframe */
 
         int i_input;    /* Number of input frames already accepted */
 
@@ -431,6 +431,8 @@ struct x264_t
         int i_max_ref0;
         int i_max_ref1;
         int i_delay;    /* Number of frames buffered for B reordering */
+        int     i_bframe_delay;
+        int64_t i_bframe_delay_time;
         int b_have_lowres;  /* Whether 1/2 resolution luma planes are being used */
         int b_have_sub8x8_esa;
     } frames;
@@ -557,6 +559,7 @@ struct x264_t
         int b_skip_mc;
         /* set to true if we are re-encoding a macroblock. */
         int b_reencode_mb;
+        int ip_offset; /* Used by PIR to offset the quantizer of intra-refresh blocks. */
 
         struct
         {
@@ -658,6 +661,7 @@ struct x264_t
         /* maps fref1[0]'s ref indices into the current list0 */
 #define map_col_to_list0(col) h->mb.map_col_to_list0[col+2]
         int8_t  map_col_to_list0[18];
+        int ref_blind_dupe; /* The index of the blind reference frame duplicate. */
     } mb;
 
     /* rate control encoding only */

@@ -70,7 +70,6 @@ do {\
 /****************************************************************************
  * Includes
  ****************************************************************************/
-#include <sys/stat.h>
 #include "osdep.h"
 #include <stdarg.h>
 #include <stddef.h>
@@ -103,7 +102,6 @@ typedef union { uint64_t i; uint32_t a[2]; uint16_t b[4]; uint8_t c[8]; } MAY_AL
 #include "dct.h"
 #include "cabac.h"
 #include "quant.h"
-#include "config.h"
 
 /****************************************************************************
  * General functions
@@ -362,16 +360,12 @@ struct x264_t
 
     /* frame number/poc */
     int             i_frame;
+    int             i_frame_num;
 
-    int             i_frame_offset; /* decoding only */
-    int             i_frame_num;    /* decoding only */
-    int             i_poc_msb;      /* decoding only */
-    int             i_poc_lsb;      /* decoding only */
-    int             i_poc;          /* decoding only */
-
-    int             i_thread_num;   /* threads only */
-    int             i_nal_type;     /* threads only */
-    int             i_nal_ref_idc;  /* threads only */
+    int             i_thread_frames; /* Number of different frames being encoded by threads;
+                                      * 1 when sliced-threads is on. */
+    int             i_nal_type;
+    int             i_nal_ref_idc;
 
     /* We use only one SPS and one PPS */
     x264_sps_t      sps_array[1];
@@ -379,6 +373,9 @@ struct x264_t
     x264_pps_t      pps_array[1];
     x264_pps_t      *pps;
     int             i_idr_pic_id;
+
+    /* Timebase multiplier for DTS compression */
+    int             i_dts_compress_multiplier;
 
     /* quantization matrix for decoding, [cqm][qp%6][coef] */
     int             (*dequant4_mf[4])[16];   /* [4][6][16] */
@@ -433,6 +430,8 @@ struct x264_t
         int i_delay;    /* Number of frames buffered for B reordering */
         int     i_bframe_delay;
         int64_t i_bframe_delay_time;
+        int64_t i_init_delta;
+        int64_t i_prev_dts[2];
         int b_have_lowres;  /* Whether 1/2 resolution luma planes are being used */
         int b_have_sub8x8_esa;
     } frames;
@@ -532,7 +531,6 @@ struct x264_t
         int8_t  *skipbp;                    /* block pattern for SKIP or DIRECT (sub)mbs. B-frames + cabac only */
         int8_t  *mb_transform_size;         /* transform_size_8x8_flag of each mb */
         uint8_t *intra_border_backup[2][3]; /* bottom pixels of the previous mb row, used for intra prediction after the framebuffer has been deblocked */
-        uint8_t (*nnz_backup)[16];          /* when using cavlc + 8x8dct, the deblocker uses a modified nnz */
 
          /* buffer for weighted versions of the reference frames */
         uint8_t *p_weight_buf[16];
@@ -611,10 +609,10 @@ struct x264_t
         struct
         {
             /* real intra4x4_pred_mode if I_4X4 or I_8X8, I_PRED_4x4_DC if mb available, -1 if not */
-            int8_t  intra4x4_pred_mode[X264_SCAN8_SIZE];
+            ALIGNED_8( int8_t intra4x4_pred_mode[X264_SCAN8_SIZE] );
 
             /* i_non_zero_count if available else 0x80 */
-            uint8_t non_zero_count[X264_SCAN8_SIZE];
+            ALIGNED_4( uint8_t non_zero_count[X264_SCAN8_SIZE] );
 
             /* -1 if unused, -2 if unavailable */
             ALIGNED_4( int8_t ref[2][X264_SCAN8_SIZE] );
@@ -626,8 +624,8 @@ struct x264_t
             /* 1 if SKIP or DIRECT. set only for B-frames + CABAC */
             ALIGNED_4( int8_t skip[X264_SCAN8_SIZE] );
 
-            ALIGNED_16( int16_t direct_mv[2][X264_SCAN8_SIZE][2] );
-            ALIGNED_4( int8_t  direct_ref[2][X264_SCAN8_SIZE] );
+            ALIGNED_4( int16_t direct_mv[2][4][2] );
+            ALIGNED_4( int8_t  direct_ref[2][4] );
             ALIGNED_4( int16_t pskip_mv[2] );
 
             /* number of neighbors (top and left) that used 8x8 dct */
@@ -741,7 +739,7 @@ struct x264_t
     x264_quant_function_t quantf;
     x264_deblock_function_t loopf;
 
-#if VISUALIZE
+#ifdef HAVE_VISUALIZE
     struct visualize_t *visualize;
 #endif
     x264_lookahead_t *lookahead;

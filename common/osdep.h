@@ -27,11 +27,18 @@
 #define _LARGEFILE_SOURCE 1
 #define _FILE_OFFSET_BITS 64
 #include <stdio.h>
+#include <sys/stat.h>
+
+#include "config.h"
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
 #else
 #include <inttypes.h>
+#endif
+
+#ifndef HAVE_LOG2F
+#define log2f(x) (logf((x))/0.693147180559945f)
 #endif
 
 #ifdef _WIN32
@@ -157,6 +164,8 @@ static inline int x264_pthread_create( x264_pthread_t *t, void *a, void *(*f)(vo
 #endif
 
 #define WORD_SIZE sizeof(void*)
+
+#define asm __asm__
 
 #if !defined(_WIN64) && !defined(__LP64__)
 #if defined(__INTEL_COMPILER)

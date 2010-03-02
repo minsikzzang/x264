@@ -42,30 +42,24 @@ static inline void zigzag_scan_2x2_dc( int16_t level[4], int16_t dct[4] )
     int d1 = dct[2] + dct[3]; \
     int d2 = dct[0] - dct[1]; \
     int d3 = dct[2] - dct[3]; \
-    int dmf = dequant_mf[i_qp%6][0]; \
-    int qbits = i_qp/6 - 5; \
-    if( qbits > 0 ) \
-    { \
-        dmf <<= qbits; \
-        qbits = 0; \
-    }
+    int dmf = dequant_mf[i_qp%6][0] << i_qp/6;
 
 static inline void idct_dequant_2x2_dc( int16_t dct[4], int16_t dct4x4[4][16], int dequant_mf[6][16], int i_qp )
 {
     IDCT_DEQUANT_START
-    dct4x4[0][0] = (d0 + d1) * dmf >> -qbits;
-    dct4x4[1][0] = (d0 - d1) * dmf >> -qbits;
-    dct4x4[2][0] = (d2 + d3) * dmf >> -qbits;
-    dct4x4[3][0] = (d2 - d3) * dmf >> -qbits;
+    dct4x4[0][0] = (d0 + d1) * dmf >> 5;
+    dct4x4[1][0] = (d0 - d1) * dmf >> 5;
+    dct4x4[2][0] = (d2 + d3) * dmf >> 5;
+    dct4x4[3][0] = (d2 - d3) * dmf >> 5;
 }
 
 static inline void idct_dequant_2x2_dconly( int16_t out[4], int16_t dct[4], int dequant_mf[6][16], int i_qp )
 {
     IDCT_DEQUANT_START
-    out[0] = (d0 + d1) * dmf >> -qbits;
-    out[1] = (d0 - d1) * dmf >> -qbits;
-    out[2] = (d2 + d3) * dmf >> -qbits;
-    out[3] = (d2 - d3) * dmf >> -qbits;
+    out[0] = (d0 + d1) * dmf >> 5;
+    out[1] = (d0 - d1) * dmf >> 5;
+    out[2] = (d2 + d3) * dmf >> 5;
+    out[3] = (d2 - d3) * dmf >> 5;
 }
 
 static inline void dct2x2dc( int16_t d[4], int16_t dct4x4[4][16] )
@@ -82,18 +76,6 @@ static inline void dct2x2dc( int16_t d[4], int16_t dct4x4[4][16] )
     dct4x4[1][0] = 0;
     dct4x4[2][0] = 0;
     dct4x4[3][0] = 0;
-}
-
-static inline void dct2x2dc_dconly( int16_t d[4] )
-{
-    int d0 = d[0] + d[1];
-    int d1 = d[2] + d[3];
-    int d2 = d[0] - d[1];
-    int d3 = d[2] - d[3];
-    d[0] = d0 + d1;
-    d[2] = d2 + d3;
-    d[1] = d0 - d1;
-    d[3] = d2 - d3;
 }
 
 static ALWAYS_INLINE int x264_quant_4x4( x264_t *h, int16_t dct[16], int i_qp, int i_ctxBlockCat, int b_intra, int idx )
@@ -208,8 +190,7 @@ static void x264_mb_encode_i16x16( x264_t *h, int i_qp )
     ALIGNED_ARRAY_16( int16_t, dct_dc4x4,[16] );
 
     int i, nz;
-    int b_decimate = h->sh.i_type == SLICE_TYPE_B || (h->param.analyse.b_dct_decimate && h->sh.i_type == SLICE_TYPE_P);
-    int decimate_score = b_decimate ? 0 : 9;
+    int decimate_score = h->mb.b_dct_decimate ? 0 : 9;
 
     if( h->mb.b_lossless )
     {
@@ -342,7 +323,7 @@ static inline int x264_mb_optimize_chroma_dc( x264_t *h, int b_inter, int i_qp, 
 void x264_mb_encode_8x8_chroma( x264_t *h, int b_inter, int i_qp )
 {
     int i, ch, nz, nz_dc;
-    int b_decimate = b_inter && (h->sh.i_type == SLICE_TYPE_B || h->param.analyse.b_dct_decimate);
+    int b_decimate = b_inter && h->mb.b_dct_decimate;
     ALIGNED_ARRAY_16( int16_t, dct2x2,[4] );
     h->mb.i_cbp_chroma = 0;
 
@@ -372,7 +353,6 @@ void x264_mb_encode_8x8_chroma( x264_t *h, int b_inter, int i_qp )
                 if( ssd[ch] > thresh )
                 {
                     h->dctf.sub8x8_dct_dc( dct2x2, h->mb.pic.p_fenc[1+ch], h->mb.pic.p_fdec[1+ch] );
-                    dct2x2dc_dconly( dct2x2 );
                     if( h->mb.b_trellis )
                         nz_dc = x264_quant_dc_trellis( h, dct2x2, CQM_4IC+b_inter, i_qp, DCT_CHROMA_DC, !b_inter, 1 );
                     else
@@ -607,7 +587,7 @@ void x264_macroblock_encode( x264_t *h )
 {
     int i_cbp_dc = 0;
     int i_qp = h->mb.i_qp;
-    int b_decimate = h->sh.i_type == SLICE_TYPE_B || h->param.analyse.b_dct_decimate;
+    int b_decimate = h->mb.b_dct_decimate;
     int b_force_no_skip = 0;
     int i,idx,nz;
     h->mb.i_cbp_luma = 0;
@@ -914,8 +894,7 @@ void x264_macroblock_encode( x264_t *h )
 
 /*****************************************************************************
  * x264_macroblock_probe_skip:
- *  Check if the current MB could be encoded as a [PB]_SKIP (it supposes you use
- *  the previous QP
+ *  Check if the current MB could be encoded as a [PB]_SKIP
  *****************************************************************************/
 int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
 {
@@ -988,10 +967,10 @@ int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
         if( ssd < thresh )
             continue;
 
-        h->dctf.sub8x8_dct( dct4x4, p_src, p_dst );
+        /* The vast majority of chroma checks will terminate during the DC check or the higher
+         * threshold check, so we can save time by doing a DC-only DCT. */
+        h->dctf.sub8x8_dct_dc( dct2x2, p_src, p_dst );
 
-        /* calculate dct DC */
-        dct2x2dc( dct2x2, dct4x4 );
         if( h->quantf.quant_2x2_dc( dct2x2, h->quant4_mf[CQM_4PC][i_qp][0]>>1, h->quant4_bias[CQM_4PC][i_qp][0]<<1 ) )
             return 0;
 
@@ -999,9 +978,15 @@ int x264_macroblock_probe_skip( x264_t *h, int b_bidir )
         if( ssd < thresh*4 )
             continue;
 
+        h->dctf.sub8x8_dct( dct4x4, p_src, p_dst );
+
         /* calculate dct coeffs */
         for( i4x4 = 0, i_decimate_mb = 0; i4x4 < 4; i4x4++ )
         {
+            /* We don't need to zero the DC coefficient before quantization because we already
+             * checked that all the DCs were zero above at twice the precision that quant4x4
+             * uses.  This applies even though the DC here is being quantized before the 2x2
+             * transform. */
             if( !h->quantf.quant_4x4( dct4x4[i4x4], h->quant4_mf[CQM_4PC][i_qp], h->quant4_bias[CQM_4PC][i_qp] ) )
                 continue;
             h->zigzagf.scan_4x4( dctscan, dct4x4[i4x4] );
@@ -1052,7 +1037,7 @@ void x264_macroblock_encode_p8x8( x264_t *h, int i8 )
     int i_qp = h->mb.i_qp;
     uint8_t *p_fenc = h->mb.pic.p_fenc[0] + (i8&1)*8 + (i8>>1)*8*FENC_STRIDE;
     uint8_t *p_fdec = h->mb.pic.p_fdec[0] + (i8&1)*8 + (i8>>1)*8*FDEC_STRIDE;
-    int b_decimate = h->sh.i_type == SLICE_TYPE_B || h->param.analyse.b_dct_decimate;
+    int b_decimate = h->mb.b_dct_decimate;
     int nnz8x8 = 0;
     int ch, nz;
 

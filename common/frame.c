@@ -95,6 +95,7 @@ x264_frame_t *x264_frame_new( x264_t *h, int b_fdec )
     if( b_fdec ) /* fdec frame */
     {
         CHECKED_MALLOC( frame->mb_type, i_mb_count * sizeof(int8_t));
+        CHECKED_MALLOC( frame->mb_partition, i_mb_count * sizeof(uint8_t));
         CHECKED_MALLOC( frame->mv[0], 2*16 * i_mb_count * sizeof(int16_t) );
         CHECKED_MALLOC( frame->ref[0], 4 * i_mb_count * sizeof(int8_t) );
         if( h->param.i_bframe )
@@ -201,6 +202,7 @@ void x264_frame_delete( x264_frame_t *frame )
         x264_free( frame->i_row_bits );
         x264_free( frame->i_row_qp );
         x264_free( frame->mb_type );
+        x264_free( frame->mb_partition );
         x264_free( frame->mv[0] );
         x264_free( frame->mv[1] );
         x264_free( frame->ref[0] );
@@ -472,12 +474,14 @@ static inline void deblock_luma_c( uint8_t *pix, int xstride, int ystride, int a
                 int delta;
                 if( abs( p2 - p0 ) < beta )
                 {
-                    pix[-2*xstride] = p1 + x264_clip3( (( p2 + ((p0 + q0 + 1) >> 1)) >> 1) - p1, -tc0[i], tc0[i] );
+                    if( tc0[i] )
+                        pix[-2*xstride] = p1 + x264_clip3( (( p2 + ((p0 + q0 + 1) >> 1)) >> 1) - p1, -tc0[i], tc0[i] );
                     tc++;
                 }
                 if( abs( q2 - q0 ) < beta )
                 {
-                    pix[ 1*xstride] = q1 + x264_clip3( (( q2 + ((p0 + q0 + 1) >> 1)) >> 1) - q1, -tc0[i], tc0[i] );
+                    if( tc0[i] )
+                        pix[ 1*xstride] = q1 + x264_clip3( (( q2 + ((p0 + q0 + 1) >> 1)) >> 1) - q1, -tc0[i], tc0[i] );
                     tc++;
                 }
 
@@ -909,13 +913,13 @@ void x264_deblock_init( int cpu, x264_deblock_function_t *pf )
     }
 #endif
 
-#ifdef ARCH_PPC
+#ifdef HAVE_ALTIVEC
     if( cpu&X264_CPU_ALTIVEC )
     {
         pf->deblock_v_luma = x264_deblock_v_luma_altivec;
         pf->deblock_h_luma = x264_deblock_h_luma_altivec;
    }
-#endif // ARCH_PPC
+#endif // HAVE_ALTIVEC
 
 #ifdef HAVE_ARMV6
    if( cpu&X264_CPU_NEON )

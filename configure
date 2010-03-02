@@ -12,7 +12,7 @@ echo "  --disable-lavf-input     disables libavformat input"
 echo "  --disable-ffms-input     disables ffmpegsource input"
 echo "  --disable-mp4-output     disables mp4 output (using gpac)"
 echo "  --disable-pthread        disables multithreaded encoding"
-echo "  --disable-asm            disables assembly optimizations on x86 and arm"
+echo "  --disable-asm            disables platform-specific assembly optimizations"
 echo "  --enable-debug           adds -g, doesn't strip"
 echo "  --enable-gprof           adds -pg, doesn't strip"
 echo "  --enable-visualize       enables visualization (X11 only)"
@@ -23,6 +23,7 @@ echo "  --extra-cflags=ECFLAGS   add ECFLAGS to CFLAGS"
 echo "  --extra-ldflags=ELDFLAGS add ELDFLAGS to LDFLAGS"
 echo "  --host=HOST              build programs to run on HOST"
 echo "  --cross-prefix=PREFIX    use PREFIX for compilation tools"
+echo "  --sysroot=SYSROOT        root of cross-build tree"
 echo ""
 exit 1
 fi
@@ -223,6 +224,10 @@ for opt do
         --cross-prefix=*)
             cross_prefix="${opt#--cross-prefix=}"
             ;;
+        --sysroot=*)
+            CFLAGS="$CFLAGS --sysroot=${opt#--sysroot=}"
+            LDFLAGS="$LDFLAGS --sysroot=${opt#--sysroot=}"
+            ;;
         *)
             echo "Unknown option $opt, ignored"
             ;;
@@ -343,20 +348,23 @@ case $host_cpu in
     ;;
   powerpc|powerpc64)
     ARCH="PPC"
-    if [ $SYS = MACOSX ]
-    then
-      CFLAGS="$CFLAGS -faltivec -fastf -mcpu=G4"
-    else
-      CFLAGS="$CFLAGS -maltivec -mabi=altivec"
-      define HAVE_ALTIVEC_H
+    if [ $asm = yes ] ; then
+      define HAVE_ALTIVEC
+      AS="${AS-${cross_prefix}gcc}"
+      if [ $SYS = MACOSX ] ; then
+        CFLAGS="$CFLAGS -faltivec -fastf -mcpu=G4"
+      else
+        CFLAGS="$CFLAGS -maltivec -mabi=altivec"
+        define HAVE_ALTIVEC_H
+      fi
     fi
     ;;
   sparc)
-    if test "$(uname -m)" = "sun4u"; then
+    if [ $asm = yes ] && test "$(uname -m)" = "sun4u"; then
       ARCH="UltraSparc"
       CFLAGS="$CFLAGS -mcpu=ultrasparc"
       LDFLAGS="$LDFLAGS -mcpu=ultrasparc"
-      AS="${cross_prefix}as"
+      AS="${AS-${cross_prefix}as}"
       ASFLAGS="$ASFLAGS -xarch=v8plusa"
     else
       ARCH="Sparc"
@@ -367,7 +375,17 @@ case $host_cpu in
     ;;
   arm*)
     ARCH="ARM"
-    AS="${AS-${cross_prefix}gcc}"
+    if [ "$SYS" = MACOSX ] ; then
+      AS="${AS-extras/gas-preprocessor.pl $CC}"
+      ASFLAGS="$ASFLAGS -DPREFIX -DPIC"  # apple's ld doesn't support movw/movt relocations at all
+      # build for armv7 by default
+      if ! echo $CFLAGS | grep -Eq '\-arch' ; then
+        CFLAGS="$CFLAGS -arch armv7"
+        LDFLAGS="$LDFLAGS -arch armv7"
+      fi
+    else
+      AS="${AS-${cross_prefix}gcc}"
+    fi
     ;;
   s390|s390x)
     ARCH="S390"
@@ -427,10 +445,10 @@ if [ $asm = yes -a $ARCH = ARM ] ; then
     # set flags so neon is built by default
     echo $CFLAGS | grep -Eq '(-mcpu|-march|-mfpu|-mfloat-abi)' || CFLAGS="$CFLAGS -mcpu=cortex-a8 -mfpu=neon -mfloat-abi=softfp"
 
-    if  cc_check '' '' '__asm__("rev ip, ip");' ; then      define HAVE_ARMV6   && ASFLAGS="$ASFLAGS -DHAVE_ARMV6"
-        cc_check '' '' '__asm__("movt r0, #0");'         && define HAVE_ARMV6T2 && ASFLAGS="$ASFLAGS -DHAVE_ARMV6T2"
-        cc_check '' '' '__asm__("vadd.i16 q0, q0, q0");' && define HAVE_NEON    && ASFLAGS="$ASFLAGS -DHAVE_NEON"
-        ASFLAGS="$ASFLAGS -c"
+    if  cc_check '' '' '__asm__("rev ip, ip");' ; then      define HAVE_ARMV6
+        cc_check '' '' '__asm__("movt r0, #0");'         && define HAVE_ARMV6T2
+        cc_check '' '' '__asm__("vadd.i16 q0, q0, q0");' && define HAVE_NEON
+        ASFLAGS="$ASFLAGS $CFLAGS -c"
     else
         echo "You specified a pre-ARMv6 or Thumb-1 CPU in your CFLAGS."
         echo "If you really want to run on such a CPU, configure with --disable-asm."
@@ -569,7 +587,13 @@ if [ $SYS = MINGW ]; then
 fi
 if [ "$mp4_output" = "auto" ] ; then
     mp4_output="no"
-    cc_check gpac/isomedia.h "$MP4_LDFLAGS" && mp4_output="yes"
+    if cc_check gpac/isomedia.h "$MP4_LDFLAGS" ; then
+        if cc_check gpac/isomedia.h "$MP4_LDFLAGS" "gf_isom_set_pixel_aspect_ratio(0,0,0,0,0);" ; then
+            mp4_output="yes"
+        else
+            echo "Warning: gpac is too old, update to 2007-06-21 UTC or later"
+        fi
+    fi
 fi
 if [ "$mp4_output" = "yes" ] ; then
     define MP4_OUTPUT

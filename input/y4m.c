@@ -42,7 +42,9 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     y4m_hnd_t *h = malloc( sizeof(y4m_hnd_t) );
     int  i, n, d;
     char header[MAX_YUV4_HEADER+10];
-    char *tokstart, *tokend, *header_end;
+    char *tokend, *header_end;
+    int colorspace = X264_CSP_NONE;
+    int alt_colorspace = X264_CSP_NONE;
     if( !h )
         return -1;
 
@@ -77,7 +79,7 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     /* Scan properties */
     header_end = &header[i+1]; /* Include space */
     h->seq_header_len = i+1;
-    for( tokstart = &header[strlen( Y4M_MAGIC )+1]; tokstart < header_end; tokstart++ )
+    for( char *tokstart = &header[strlen( Y4M_MAGIC )+1]; tokstart < header_end; tokstart++ )
     {
         if( *tokstart == 0x20 )
             continue;
@@ -92,11 +94,10 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
                 tokstart=tokend;
                 break;
             case 'C': /* Color space */
-                if( strncmp( "420", tokstart, 3 ) )
-                {
-                    fprintf( stderr, "y4m [error]: colorspace unhandled\n" );
-                    return -1;
-                }
+                if( !strncmp( "420", tokstart, 3 ) )
+                    colorspace = X264_CSP_I420;
+                else
+                    colorspace = X264_CSP_MAX;      ///< anything other than 420 since we don't handle it
                 tokstart = strchr( tokstart, 0x20 );
                 break;
             case 'I': /* Interlace type */
@@ -135,17 +136,27 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
                 {
                     /* Older nonstandard pixel format representation */
                     tokstart += 6;
-                    if( strncmp( "420JPEG",tokstart, 7 ) &&
-                        strncmp( "420MPEG2",tokstart, 8 ) &&
-                        strncmp( "420PALDV",tokstart, 8 ) )
-                    {
-                        fprintf( stderr, "y4m [error]: unsupported extended colorspace\n" );
-                        return -1;
-                    }
+                    if( !strncmp( "420",tokstart, 3 ) )
+                        alt_colorspace = X264_CSP_I420;
+                    else
+                        alt_colorspace = X264_CSP_MAX;
                 }
                 tokstart = strchr( tokstart, 0x20 );
                 break;
         }
+    }
+
+    if( colorspace == X264_CSP_NONE )
+        colorspace = alt_colorspace;
+
+    // default to 4:2:0 if nothing is specified
+    if( colorspace == X264_CSP_NONE )
+        colorspace = X264_CSP_I420;
+
+    if( colorspace != X264_CSP_I420 )
+    {
+        fprintf( stderr, "y4m [error]: colorspace unhandled\n" );
+        return -1;
     }
 
     *p_handle = h;

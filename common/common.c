@@ -146,18 +146,21 @@ void x264_param_default( x264_param_t *param )
     param->analyse.b_ssim = 0;
 
     param->i_cqm_preset = X264_CQM_FLAT;
-    memset( param->cqm_4iy, 16, 16 );
-    memset( param->cqm_4ic, 16, 16 );
-    memset( param->cqm_4py, 16, 16 );
-    memset( param->cqm_4pc, 16, 16 );
-    memset( param->cqm_8iy, 16, 64 );
-    memset( param->cqm_8py, 16, 64 );
+    memset( param->cqm_4iy, 16, sizeof( param->cqm_4iy ) );
+    memset( param->cqm_4ic, 16, sizeof( param->cqm_4ic ) );
+    memset( param->cqm_4py, 16, sizeof( param->cqm_4py ) );
+    memset( param->cqm_4pc, 16, sizeof( param->cqm_4pc ) );
+    memset( param->cqm_8iy, 16, sizeof( param->cqm_8iy ) );
+    memset( param->cqm_8py, 16, sizeof( param->cqm_8py ) );
 
     param->b_repeat_headers = 1;
     param->b_annexb = 1;
     param->b_aud = 0;
     param->b_vfr_input = 1;
     param->b_dts_compress = 0;
+    param->i_nal_hrd = X264_NAL_HRD_NONE;
+    param->b_tff = 1;
+    param->b_pic_struct = 0;
 }
 
 static int x264_param_apply_preset( x264_param_t *param, const char *preset )
@@ -181,11 +184,21 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->rc.b_mb_tree = 0;
         param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
     }
-    else if( !strcasecmp( preset, "veryfast" ) )
+    else if( !strcasecmp( preset, "superfast" ) )
     {
         param->analyse.inter = X264_ANALYSE_I8x8|X264_ANALYSE_I4x4;
         param->analyse.i_me_method = X264_ME_DIA;
         param->analyse.i_subpel_refine = 1;
+        param->i_frame_reference = 1;
+        param->analyse.b_mixed_references = 0;
+        param->analyse.i_trellis = 0;
+        param->rc.b_mb_tree = 0;
+        param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+    }
+    else if( !strcasecmp( preset, "veryfast" ) )
+    {
+        param->analyse.i_me_method = X264_ME_HEX;
+        param->analyse.i_subpel_refine = 2;
         param->i_frame_reference = 1;
         param->analyse.b_mixed_references = 0;
         param->analyse.i_trellis = 0;
@@ -197,8 +210,8 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->analyse.b_mixed_references = 0;
         param->i_frame_reference = 2;
         param->analyse.i_subpel_refine = 4;
-        param->rc.b_mb_tree = 0;
         param->analyse.i_weighted_pred = X264_WEIGHTP_BLIND;
+        param->rc.i_lookahead = 20;
     }
     else if( !strcasecmp( preset, "fast" ) )
     {
@@ -259,7 +272,7 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
     }
     else
     {
-        fprintf( stderr, "x264 [error]: invalid preset '%s'\n", preset );
+        x264_log( NULL, X264_LOG_ERROR, "invalid preset '%s'\n", preset );
         return -1;
     }
     return 0;
@@ -306,6 +319,15 @@ static int x264_param_apply_tune( x264_param_t *param, const char *tune )
             param->analyse.i_luma_deadzone[1] = 6;
             param->rc.f_qcompress = 0.8;
         }
+        else if( !strncasecmp( s, "stillimage", 5 ) )
+        {
+            if( psy_tuning_used++ ) goto psy_failure;
+            param->i_deblocking_filter_alphac0 = -3;
+            param->i_deblocking_filter_beta = -3;
+            param->analyse.f_psy_rd = 2.0;
+            param->analyse.f_psy_trellis = 0.7;
+            param->rc.f_aq_strength = 1.2;
+        }
         else if( !strncasecmp( s, "psnr", 4 ) )
         {
             if( psy_tuning_used++ ) goto psy_failure;
@@ -331,6 +353,7 @@ static int x264_param_apply_tune( x264_param_t *param, const char *tune )
             param->i_sync_lookahead = 0;
             param->i_bframe = 0;
             param->b_sliced_threads = 1;
+            param->b_vfr_input = 0;
         }
         else if( !strncasecmp( s, "touhou", 6 ) )
         {
@@ -345,14 +368,14 @@ static int x264_param_apply_tune( x264_param_t *param, const char *tune )
         }
         else
         {
-            fprintf( stderr, "x264 [error]: invalid tune '%s'\n", s );
+            x264_log( NULL, X264_LOG_ERROR, "invalid tune '%s'\n", s );
             x264_free( tmp );
             return -1;
         }
         if( 0 )
         {
     psy_failure:
-            fprintf( stderr, "x264 [warning]: only 1 psy tuning can be used: ignoring tune %s\n", s );
+            x264_log( NULL, X264_LOG_WARNING, "only 1 psy tuning can be used: ignoring tune %s\n", s );
         }
         s = strtok( NULL, ",./-+" );
     }
@@ -399,7 +422,7 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
         param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
         if( param->b_interlaced )
         {
-            fprintf( stderr, "x264 [error]: baseline profile doesn't support interlacing\n" );
+            x264_log( NULL, X264_LOG_ERROR, "baseline profile doesn't support interlacing\n" );
             return -1;
         }
     }
@@ -414,13 +437,13 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
     }
     else
     {
-        fprintf( stderr, "x264 [error]: invalid profile: %s\n", profile );
+        x264_log( NULL, X264_LOG_ERROR, "invalid profile: %s\n", profile );
         return -1;
     }
     if( (param->rc.i_rc_method == X264_RC_CQP && param->rc.i_qp_constant == 0) ||
         (param->rc.i_rc_method == X264_RC_CRF && param->rc.f_rf_constant == 0) )
     {
-        fprintf( stderr, "x264 [error]: %s profile doesn't support lossless\n", profile );
+        x264_log( NULL, X264_LOG_ERROR, "%s profile doesn't support lossless\n", profile );
         return -1;
     }
     return 0;
@@ -428,8 +451,7 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
 
 static int parse_enum( const char *arg, const char * const *names, int *dst )
 {
-    int i;
-    for( i = 0; names[i]; i++ )
+    for( int i = 0; names[i]; i++ )
         if( !strcmp( arg, names[i] ) )
         {
             *dst = i;
@@ -504,10 +526,10 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
 
     if( strchr( name, '_' ) ) // s/_/-/g
     {
-        char *p;
+        char *c;
         name_buf = strdup(name);
-        while( (p = strchr( name_buf, '_' )) )
-            *p = '-';
+        while( (c = strchr( name_buf, '_' )) )
+            *c = '-';
         name = name_buf;
     }
 
@@ -676,6 +698,13 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->i_cabac_init_idc = atoi(value);
     OPT("interlaced")
         p->b_interlaced = atobool(value);
+    OPT("tff")
+        p->b_interlaced = p->b_tff = atobool(value);
+    OPT("bff")
+    {
+        p->b_interlaced = atobool(value);
+        p->b_tff = !p->b_interlaced;
+    }
     OPT("constrained-intra")
         p->b_constrained_intra = atobool(value);
     OPT("cqm")
@@ -834,6 +863,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->rc.f_rf_constant = atof(value);
         p->rc.i_rc_method = X264_RC_CRF;
     }
+    OPT("crf-max")
+        p->rc.f_rf_constant_max = atof(value);
     OPT("rc-lookahead")
         p->rc.i_lookahead = atoi(value);
     OPT2("qpmin", "qp-min")
@@ -860,9 +891,9 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->rc.f_aq_strength = atof(value);
     OPT("pass")
     {
-        int i = x264_clip3( atoi(value), 0, 3 );
-        p->rc.b_stat_write = i & 1;
-        p->rc.b_stat_read = i & 2;
+        int pass = x264_clip3( atoi(value), 0, 3 );
+        p->rc.b_stat_write = pass & 1;
+        p->rc.b_stat_read = pass & 2;
     }
     OPT("stats")
     {
@@ -895,6 +926,10 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->b_annexb = atobool(value);
     OPT("force-cfr")
         p->b_vfr_input = !atobool(value);
+    OPT("nal-hrd")
+        b_error |= parse_enum( value, x264_nal_hrd_names, &p->i_nal_hrd );
+    OPT("pic-struct")
+        p->b_pic_struct = atobool(value);
     else
         return X264_PARAM_BAD_NAME;
 #undef OPT
@@ -970,6 +1005,7 @@ int x264_picture_alloc( x264_picture_t *pic, int i_csp, int i_width, int i_heigh
     pic->img.i_stride[1] = i_width / 2;
     pic->img.i_stride[2] = i_width / 2;
     pic->param = NULL;
+    pic->i_pic_struct = PIC_STRUCT_AUTO;
     return 0;
 }
 
@@ -1149,6 +1185,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
     {
         s += sprintf( s, "%dx%d ", p->i_width, p->i_height );
         s += sprintf( s, "fps=%d/%d ", p->i_fps_num, p->i_fps_den );
+        s += sprintf( s, "timebase=%d/%d ", p->i_timebase_num, p->i_timebase_den );
     }
 
     s += sprintf( s, "cabac=%d", p->b_cabac );
@@ -1180,7 +1217,8 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, " slice_max_mbs=%d", p->i_slice_max_mbs );
     s += sprintf( s, " nr=%d", p->analyse.i_noise_reduction );
     s += sprintf( s, " decimate=%d", p->analyse.b_dct_decimate );
-    s += sprintf( s, " mbaff=%d", p->b_interlaced );
+    s += sprintf( s, " interlaced=%s", p->b_interlaced ? p->b_tff ? "tff" : "bff" : "0" );
+
     s += sprintf( s, " constrained_intra=%d", p->b_constrained_intra );
 
     s += sprintf( s, " bframes=%d", p->i_bframe );
@@ -1199,7 +1237,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, " rc_lookahead=%d", p->rc.i_lookahead );
 
     s += sprintf( s, " rc=%s mbtree=%d", p->rc.i_rc_method == X264_RC_ABR ?
-                               ( p->rc.b_stat_read ? "2pass" : p->rc.i_vbv_buffer_size ? "cbr" : "abr" )
+                               ( p->rc.b_stat_read ? "2pass" : p->rc.i_vbv_buffer_size == p->rc.i_bitrate ? "cbr" : "abr" )
                                : p->rc.i_rc_method == X264_RC_CRF ? "crf" : "cqp", p->rc.b_mb_tree );
     if( p->rc.i_rc_method == X264_RC_ABR || p->rc.i_rc_method == X264_RC_CRF )
     {
@@ -1214,8 +1252,12 @@ char *x264_param2string( x264_param_t *p, int b_res )
             s += sprintf( s, " cplxblur=%.1f qblur=%.1f",
                           p->rc.f_complexity_blur, p->rc.f_qblur );
         if( p->rc.i_vbv_buffer_size )
+        {
             s += sprintf( s, " vbv_maxrate=%d vbv_bufsize=%d",
                           p->rc.i_vbv_max_bitrate, p->rc.i_vbv_buffer_size );
+            if( p->rc.i_rc_method == X264_RC_CRF )
+                s += sprintf( s, " crf-max=%.1f", p->rc.f_rf_constant_max );
+        }
     }
     else if( p->rc.i_rc_method == X264_RC_CQP )
         s += sprintf( s, " qp=%d", p->rc.i_qp_constant );
@@ -1233,6 +1275,8 @@ char *x264_param2string( x264_param_t *p, int b_res )
             s += sprintf( s, " zones" );
     }
 
+    if( p->rc.i_vbv_buffer_size )
+        s += sprintf( s, " nal_hrd=%s", x264_nal_hrd_names[p->i_nal_hrd] );
     return buf;
 }
 

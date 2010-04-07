@@ -38,7 +38,8 @@
 #endif
 
 #ifndef HAVE_LOG2F
-#define log2f(x) (logf((x))/0.693147180559945f)
+#define log2f(x) (logf(x)/0.693147180559945f)
+#define log2(x) (log(x)/0.693147180559945)
 #endif
 
 #ifdef _WIN32
@@ -91,12 +92,14 @@
 #define NOINLINE __attribute__((noinline))
 #define MAY_ALIAS __attribute__((may_alias))
 #define x264_constant_p(x) __builtin_constant_p(x)
+#define x264_nonconstant_p(x) (!__builtin_constant_p(x))
 #else
 #define UNUSED
 #define ALWAYS_INLINE inline
 #define NOINLINE
 #define MAY_ALIAS
 #define x264_constant_p(x) 0
+#define x264_nonconstant_p(x) 0
 #endif
 
 /* threads */
@@ -221,6 +224,7 @@ static ALWAYS_INLINE uint16_t endian_fix16( uint16_t x )
 
 #if defined(__GNUC__) && (__GNUC__ > 3 || __GNUC__ == 3 && __GNUC_MINOR__ > 3)
 #define x264_clz(x) __builtin_clz(x)
+#define x264_ctz(x) __builtin_ctz(x)
 #else
 static int ALWAYS_INLINE x264_clz( uint32_t x )
 {
@@ -232,6 +236,18 @@ static int ALWAYS_INLINE x264_clz( uint32_t x )
     z += y = ((x - 0x10) >> 29) & 4;
     x >>= y^4;
     return z + lut[x];
+}
+
+static int ALWAYS_INLINE x264_ctz( uint32_t x )
+{
+    static uint8_t lut[16] = {4,0,1,0,2,0,1,0,3,0,1,0,2,0,1,0};
+    int y, z = (((x & 0xffff) - 1) >> 27) & 16;
+    x >>= z;
+    z += y = (((x & 0xff) - 1) >> 28) & 8;
+    x >>= y;
+    z += y = (((x & 0xf) - 1) >> 29) & 4;
+    x >>= y;
+    return z + lut[x&0xf];
 }
 #endif
 

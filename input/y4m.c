@@ -40,7 +40,8 @@ typedef struct
 static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, cli_input_opt_t *opt )
 {
     y4m_hnd_t *h = malloc( sizeof(y4m_hnd_t) );
-    int  i, n, d;
+    int i;
+    uint32_t n, d;
     char header[MAX_YUV4_HEADER+10];
     char *tokend, *header_end;
     int colorspace = X264_CSP_NONE;
@@ -103,13 +104,21 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
             case 'I': /* Interlace type */
                 switch( *tokstart++ )
                 {
-                    case 'p': break;
-                    case '?':
                     case 't':
-                    case 'b':
-                    case 'm':
-                    default:
                         info->interlaced = 1;
+                        info->tff = 1;
+                        break;
+                    case 'b':
+                        info->interlaced = 1;
+                        info->tff = 0;
+                        break;
+                    case 'm':
+                        info->interlaced = 1;
+                        break;
+                    //case '?':
+                    //case 'p':
+                    default:
+                        break;
                 }
                 break;
             case 'F': /* Frame rate - 0:0 if unknown */

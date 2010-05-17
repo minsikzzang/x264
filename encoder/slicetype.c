@@ -25,7 +25,6 @@
 #include <math.h>
 
 #include "common/common.h"
-#include "common/cpu.h"
 #include "macroblock.h"
 #include "me.h"
 
@@ -382,21 +381,23 @@ static void x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
 
             /* Reverse-order MV prediction. */
             M32( mvc[0] ) = 0;
-            M32( mvc[1] ) = 0;
             M32( mvc[2] ) = 0;
 #define MVC(mv) { CP32( mvc[i_mvc], mv ); i_mvc++; }
             if( i_mb_x < h->sps->i_mb_width - 1 )
-                MVC(fenc_mv[1]);
+                MVC( fenc_mv[1] );
             if( i_mb_y < h->sps->i_mb_height - 1 )
             {
-                MVC(fenc_mv[i_mb_stride]);
+                MVC( fenc_mv[i_mb_stride] );
                 if( i_mb_x > 0 )
-                    MVC(fenc_mv[i_mb_stride-1]);
+                    MVC( fenc_mv[i_mb_stride-1] );
                 if( i_mb_x < h->sps->i_mb_width - 1 )
-                    MVC(fenc_mv[i_mb_stride+1]);
+                    MVC( fenc_mv[i_mb_stride+1] );
             }
 #undef MVC
-            x264_median_mv( m[l].mvp, mvc[0], mvc[1], mvc[2] );
+            if( i_mvc <= 1 )
+                CP32( m[l].mvp, mvc[0] );
+            else
+                x264_median_mv( m[l].mvp, mvc[0], mvc[1], mvc[2] );
             x264_me_search( h, &m[l], mvc, i_mvc );
 
             m[l].cost -= 2; // remove mvcost from skip mbs
@@ -415,10 +416,6 @@ static void x264_slicetype_mb_cost( x264_t *h, x264_mb_analysis_t *a,
 
     if( b_bidir && ( M32( m[0].mv ) || M32( m[1].mv ) ) )
         TRY_BIDIR( m[0].mv, m[1].mv, 5 );
-
-    /* Store to width-2 bitfield. */
-    frames[b]->lowres_inter_types[b-p0][p1-b][i_mb_xy>>2] &= ~(3<<((i_mb_xy&3)*2));
-    frames[b]->lowres_inter_types[b-p0][p1-b][i_mb_xy>>2] |= list_used<<((i_mb_xy&3)*2);
 
 lowres_intra_mb:
     if( !fenc->b_intra_calculated )
@@ -481,7 +478,10 @@ lowres_intra_mb:
         int i_icost = fenc->i_intra_cost[i_mb_xy];
         int b_intra = i_icost < i_bcost;
         if( b_intra )
+        {
             i_bcost = i_icost;
+            list_used = 0;
+        }
         if( b_frame_score_mb )
             fenc->i_intra_mbs[b-p0] += b_intra;
     }
@@ -501,7 +501,7 @@ lowres_intra_mb:
         }
     }
 
-    fenc->lowres_costs[b-p0][p1-b][i_mb_xy] = i_bcost;
+    fenc->lowres_costs[b-p0][p1-b][i_mb_xy] = i_bcost + (list_used << LOWRES_COST_SHIFT);
 }
 #undef TRY_BIDIR
 
@@ -615,7 +615,7 @@ static int x264_slicetype_frame_cost_recalculate( x264_t *h, x264_frame_t **fram
         for( h->mb.i_mb_x = h->sps->i_mb_width - 1; h->mb.i_mb_x >= 0; h->mb.i_mb_x-- )
         {
             int i_mb_xy = h->mb.i_mb_x + h->mb.i_mb_y*h->mb.i_mb_stride;
-            int i_mb_cost = frames[b]->lowres_costs[b-p0][p1-b][i_mb_xy];
+            int i_mb_cost = frames[b]->lowres_costs[b-p0][p1-b][i_mb_xy] & LOWRES_COST_MASK;
             float qp_adj = qp_offset[i_mb_xy];
             i_mb_cost = (i_mb_cost * x264_exp2fix8(qp_adj) + 128) >> 8;
             row_satd[ h->mb.i_mb_y ] += i_mb_cost;
@@ -681,17 +681,29 @@ static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, in
             if( propagate_amount > 0 )
             {
                 /* Access width-2 bitfield. */
-                int lists_used = (frames[b]->lowres_inter_types[b-p0][p1-b][mb_index>>2] >> ((mb_index&3)*2))&3;
+                int lists_used = frames[b]->lowres_costs[b-p0][p1-b][mb_index] >> LOWRES_COST_SHIFT;
                 /* Follow the MVs to the previous frame(s). */
                 for( int list = 0; list < 2; list++ )
                     if( (lists_used >> list)&1 )
                     {
+#define CLIP_ADD(s,x) (s) = X264_MIN((s)+(x),(1<<16)-1)
+                        int listamount = propagate_amount;
+                        /* Apply bipred weighting. */
+                        if( lists_used == 3 )
+                            listamount = (listamount * bipred_weights[list] + 32) >> 6;
+
+                        /* Early termination for simple case of mv0. */
+                        if( !M32( mvs[list][mb_index] ) )
+                        {
+                            CLIP_ADD( ref_costs[list][mb_index], listamount );
+                            continue;
+                        }
+
                         int x = mvs[list][mb_index][0];
                         int y = mvs[list][mb_index][1];
-                        int listamount = propagate_amount;
                         int mbx = (x>>5)+h->mb.i_mb_x;
                         int mby = (y>>5)+h->mb.i_mb_y;
-                        int idx0 = mbx + mby*h->mb.i_mb_stride;
+                        int idx0 = mbx + mby * h->mb.i_mb_stride;
                         int idx1 = idx0 + 1;
                         int idx2 = idx0 + h->mb.i_mb_stride;
                         int idx3 = idx0 + h->mb.i_mb_stride + 1;
@@ -701,12 +713,6 @@ static void x264_macroblock_tree_propagate( x264_t *h, x264_frame_t **frames, in
                         int idx1weight = (32-y)*x;
                         int idx2weight = y*(32-x);
                         int idx3weight = y*x;
-
-                        /* Apply bipred weighting. */
-                        if( lists_used == 3 )
-                            listamount = (listamount * bipred_weights[list] + 32) >> 6;
-
-#define CLIP_ADD(s,x) (s) = X264_MIN((s)+(x),(1<<16)-1)
 
                         /* We could just clip the MVs, but pixels that lie outside the frame probably shouldn't
                          * be counted. */
@@ -1484,7 +1490,7 @@ int x264_rc_analyse_slice( x264_t *h )
             for( int x = h->fdec->i_pir_start_col; x <= h->fdec->i_pir_end_col; x++, mb_xy++ )
             {
                 int intra_cost = (h->fenc->i_intra_cost[mb_xy] * ip_factor + 128) >> 8;
-                int inter_cost = h->fenc->lowres_costs[b-p0][p1-b][mb_xy];
+                int inter_cost = h->fenc->lowres_costs[b-p0][p1-b][mb_xy] & LOWRES_COST_MASK;
                 int diff = intra_cost - inter_cost;
                 if( h->param.rc.i_aq_mode )
                     h->fdec->i_row_satd[y] += (diff * frames[b]->i_inv_qscale_factor[mb_xy] + 128) >> 8;

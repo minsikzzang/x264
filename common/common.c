@@ -22,7 +22,6 @@
  *****************************************************************************/
 
 #include "common.h"
-#include "cpu.h"
 
 #include <stdarg.h>
 #include <ctype.h>
@@ -70,7 +69,7 @@ void x264_param_default( x264_param_t *param )
     /* Encoder parameters */
     param->i_frame_reference = 3;
     param->i_keyint_max = 250;
-    param->i_keyint_min = 25;
+    param->i_keyint_min = X264_KEYINT_MIN_AUTO;
     param->i_bframe = 3;
     param->i_scenecut_threshold = 40;
     param->i_bframe_adaptive = X264_B_ADAPT_FAST;
@@ -405,6 +404,7 @@ void x264_param_apply_fastfirstpass( x264_param_t *param )
         param->analyse.i_me_method = X264_ME_DIA;
         param->analyse.i_subpel_refine = X264_MIN( 2, param->analyse.i_subpel_refine );
         param->analyse.i_trellis = 0;
+        param->analyse.b_fast_pskip = 1;
     }
 }
 
@@ -613,7 +613,7 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
     }
     OPT("fps")
     {
-        if( sscanf( value, "%d/%d", &p->i_fps_num, &p->i_fps_den ) == 2 )
+        if( sscanf( value, "%u/%u", &p->i_fps_num, &p->i_fps_den ) == 2 )
             ;
         else
         {
@@ -1118,11 +1118,11 @@ void x264_free( void *p )
 /****************************************************************************
  * x264_reduce_fraction:
  ****************************************************************************/
-void x264_reduce_fraction( int *n, int *d )
+void x264_reduce_fraction( uint32_t *n, uint32_t *d )
 {
-    int a = *n;
-    int b = *d;
-    int c;
+    uint32_t a = *n;
+    uint32_t b = *d;
+    uint32_t c;
     if( !a || !b )
         return;
     c = a % b;
@@ -1184,8 +1184,8 @@ char *x264_param2string( x264_param_t *p, int b_res )
     if( b_res )
     {
         s += sprintf( s, "%dx%d ", p->i_width, p->i_height );
-        s += sprintf( s, "fps=%d/%d ", p->i_fps_num, p->i_fps_den );
-        s += sprintf( s, "timebase=%d/%d ", p->i_timebase_num, p->i_timebase_den );
+        s += sprintf( s, "fps=%u/%u ", p->i_fps_num, p->i_fps_den );
+        s += sprintf( s, "timebase=%u/%u ", p->i_timebase_num, p->i_timebase_den );
     }
 
     s += sprintf( s, "cabac=%d", p->b_cabac );
@@ -1224,11 +1224,11 @@ char *x264_param2string( x264_param_t *p, int b_res )
     s += sprintf( s, " bframes=%d", p->i_bframe );
     if( p->i_bframe )
     {
-        s += sprintf( s, " b_pyramid=%d b_adapt=%d b_bias=%d direct=%d wpredb=%d",
+        s += sprintf( s, " b_pyramid=%d b_adapt=%d b_bias=%d direct=%d weightb=%d",
                       p->i_bframe_pyramid, p->i_bframe_adaptive, p->i_bframe_bias,
                       p->analyse.i_direct_mv_pred, p->analyse.b_weighted_bipred );
     }
-    s += sprintf( s, " wpredp=%d", p->analyse.i_weighted_pred > 0 ? p->analyse.i_weighted_pred : 0 );
+    s += sprintf( s, " weightp=%d", p->analyse.i_weighted_pred > 0 ? p->analyse.i_weighted_pred : 0 );
 
     s += sprintf( s, " keyint=%d keyint_min=%d scenecut=%d intra_refresh=%d",
                   p->i_keyint_max, p->i_keyint_min, p->i_scenecut_threshold, p->b_intra_refresh );
@@ -1237,7 +1237,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, " rc_lookahead=%d", p->rc.i_lookahead );
 
     s += sprintf( s, " rc=%s mbtree=%d", p->rc.i_rc_method == X264_RC_ABR ?
-                               ( p->rc.b_stat_read ? "2pass" : p->rc.i_vbv_buffer_size == p->rc.i_bitrate ? "cbr" : "abr" )
+                               ( p->rc.b_stat_read ? "2pass" : p->rc.i_vbv_max_bitrate == p->rc.i_bitrate ? "cbr" : "abr" )
                                : p->rc.i_rc_method == X264_RC_CRF ? "crf" : "cqp", p->rc.b_mb_tree );
     if( p->rc.i_rc_method == X264_RC_ABR || p->rc.i_rc_method == X264_RC_CRF )
     {
@@ -1256,7 +1256,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
             s += sprintf( s, " vbv_maxrate=%d vbv_bufsize=%d",
                           p->rc.i_vbv_max_bitrate, p->rc.i_vbv_buffer_size );
             if( p->rc.i_rc_method == X264_RC_CRF )
-                s += sprintf( s, " crf-max=%.1f", p->rc.f_rf_constant_max );
+                s += sprintf( s, " crf_max=%.1f", p->rc.f_rf_constant_max );
         }
     }
     else if( p->rc.i_rc_method == X264_RC_CQP )

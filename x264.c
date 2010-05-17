@@ -120,7 +120,7 @@ enum pulldown_type_e
 
 static const cli_pulldown_t pulldown_values[] =
 {
-    [X264_PULLDOWN_22]     = {1,  {TB},                                   2.0},
+    [X264_PULLDOWN_22]     = {1,  {TB},                                   1.0},
     [X264_PULLDOWN_32]     = {4,  {TBT, BT, BTB, TB},                     1.25},
     [X264_PULLDOWN_64]     = {2,  {PIC_STRUCT_DOUBLE, PIC_STRUCT_TRIPLE}, 1.0},
     [X264_PULLDOWN_DOUBLE] = {1,  {PIC_STRUCT_DOUBLE},                    2.0},
@@ -356,14 +356,15 @@ static void Help( x264_param_t *defaults, int longhelp )
              "                                                 stillimage,psnr,ssim\n"
              "                                  - other tunings: fastdecode,zerolatency\n" );
     H2( "      --slow-firstpass        Don't force these faster settings with --pass 1:\n"
-        "                                  --no-8x8dct --me dia --partitions none --ref 1\n"
-        "                                  --subme {2 if >2 else unchanged} --trellis 0\n" );
+        "                                  --no-8x8dct --me dia --partitions none\n"
+        "                                  --ref 1 --subme {2 if >2 else unchanged}\n"
+        "                                  --trellis 0 --fast-pskip\n" );
     else H1( "      --slow-firstpass        Don't force faster settings with --pass 1\n" );
     H0( "\n" );
     H0( "Frame-type options:\n" );
     H0( "\n" );
     H0( "  -I, --keyint <integer>      Maximum GOP size [%d]\n", defaults->i_keyint_max );
-    H2( "  -i, --min-keyint <integer>  Minimum GOP size [%d]\n", defaults->i_keyint_min );
+    H2( "  -i, --min-keyint <integer>  Minimum GOP size [auto]\n" );
     H2( "      --no-scenecut           Disable adaptive I-frame decision\n" );
     H2( "      --scenecut <integer>    How aggressively to insert extra I-frames [%d]\n", defaults->i_scenecut_threshold );
     H2( "      --intra-refresh         Use Periodic Intra Refresh instead of IDR frames\n" );
@@ -1134,6 +1135,7 @@ generic_option:
     info.interlaced = param->b_interlaced;
     info.sar_width  = param->vui.i_sar_width;
     info.sar_height = param->vui.i_sar_height;
+    info.tff        = param->b_tff;
     info.vfr        = param->b_vfr_input;
 
     if( select_input( demuxer, demuxername, input_filename, &opt->hin, &info, &input_opt ) )
@@ -1180,9 +1182,11 @@ generic_option:
     param->i_width     = info.width;
     if( !b_user_interlaced && info.interlaced )
     {
-        fprintf( stderr, "x264 [warning]: input appears to be interlaced, enabling interlaced mode.\n"
-                         "                If you want otherwise, use --no-interlaced\n" );
+        fprintf( stderr, "x264 [warning]: input appears to be interlaced, enabling %cff interlaced mode.\n"
+                         "                If you want otherwise, use --no-interlaced or --%cff\n",
+                 info.tff ? 't' : 'b', info.tff ? 'b' : 't' );
         param->b_interlaced = 1;
+        param->b_tff = !!info.tff;
     }
     if( !b_user_fps )
     {
@@ -1201,9 +1205,9 @@ generic_option:
     }
     if( !tcfile_name && input_opt.timebase )
     {
-        int i_user_timebase_num;
-        int i_user_timebase_den;
-        int ret = sscanf( input_opt.timebase, "%d/%d", &i_user_timebase_num, &i_user_timebase_den );
+        uint64_t i_user_timebase_num;
+        uint64_t i_user_timebase_den;
+        int ret = sscanf( input_opt.timebase, "%"SCNu64"/%"SCNu64, &i_user_timebase_num, &i_user_timebase_den );
         if( !ret )
         {
             fprintf( stderr, "x264 [error]: invalid argument: timebase = %s\n", input_opt.timebase );
@@ -1212,7 +1216,12 @@ generic_option:
         else if( ret == 1 )
         {
             i_user_timebase_num = param->i_timebase_num;
-            i_user_timebase_den = atoi( input_opt.timebase );
+            i_user_timebase_den = strtoul( input_opt.timebase, NULL, 10 );
+        }
+        if( i_user_timebase_num > UINT32_MAX || i_user_timebase_den > UINT32_MAX )
+        {
+            fprintf( stderr, "x264 [error]: timebase you specified exceeds H.264 maximum\n" );
+            return -1;
         }
         opt->timebase_convert_multiplier = ((double)i_user_timebase_den / param->i_timebase_den)
                                          * ((double)param->i_timebase_num / i_user_timebase_num);
@@ -1303,7 +1312,7 @@ static void parse_qpfile( cli_opt_t *opt, x264_picture_t *pic, int i_frame )
  * Encode:
  *****************************************************************************/
 
-static int  Encode_frame( x264_t *h, hnd_t hout, x264_picture_t *pic, int64_t *last_pts )
+static int  Encode_frame( x264_t *h, hnd_t hout, x264_picture_t *pic, int64_t *last_dts )
 {
     x264_picture_t pic_out;
     x264_nal_t *nal;
@@ -1321,18 +1330,22 @@ static int  Encode_frame( x264_t *h, hnd_t hout, x264_picture_t *pic, int64_t *l
     if( i_frame_size )
     {
         i_frame_size = output.write_frame( hout, nal[0].p_payload, i_frame_size, &pic_out );
-        *last_pts = pic_out.i_pts;
+        *last_dts = pic_out.i_dts;
     }
 
     return i_frame_size;
 }
 
-static void Print_status( int64_t i_start, int i_frame, int i_frame_total, int64_t i_file, x264_param_t *param, int64_t last_pts )
+static void Print_status( int64_t i_start, int i_frame, int i_frame_total, int64_t i_file, x264_param_t *param, int64_t last_ts )
 {
     char    buf[200];
     int64_t i_elapsed = x264_mdate() - i_start;
     double fps = i_elapsed > 0 ? i_frame * 1000000. / i_elapsed : 0;
-    double bitrate = (double) i_file * 8 / ( (double) last_pts * 1000 * param->i_timebase_num / param->i_timebase_den );
+    double bitrate;
+    if( last_ts )
+        bitrate = (double) i_file * 8 / ( (double) last_ts * 1000 * param->i_timebase_num / param->i_timebase_den );
+    else
+        bitrate = (double) i_file * 8 / ( (double) 1000 * param->i_fps_den / param->i_fps_num );
     if( i_frame_total )
     {
         int eta = i_elapsed * (i_frame_total - i_frame) / ((int64_t)i_frame * 1000000);
@@ -1360,7 +1373,9 @@ static int  Encode( x264_param_t *param, cli_opt_t *opt )
     int64_t i_file = 0;
     int     i_frame_size;
     int     i_update_interval;
-    int64_t last_pts = 0;
+    int64_t last_dts = 0;
+    int64_t prev_dts = 0;
+    int64_t first_dts = 0;
 #   define  MAX_PTS_WARNING 3 /* arbitrary */
     int     pts_warning_cnt = 0;
     int64_t largest_pts = -1;
@@ -1497,12 +1512,17 @@ static int  Encode( x264_param_t *param, cli_opt_t *opt )
             pic.i_qpplus1 = 0;
         }
 
-        i_frame_size = Encode_frame( h, opt->hout, &pic, &last_pts );
+        prev_dts = last_dts;
+        i_frame_size = Encode_frame( h, opt->hout, &pic, &last_dts );
         if( i_frame_size < 0 )
             return -1;
         i_file += i_frame_size;
         if( i_frame_size )
+        {
             i_frame_output++;
+            if( i_frame_output == 1 )
+                first_dts = prev_dts = last_dts;
+        }
 
         i_frame++;
 
@@ -1511,19 +1531,24 @@ static int  Encode( x264_param_t *param, cli_opt_t *opt )
 
         /* update status line (up to 1000 times per input file) */
         if( opt->b_progress && i_frame_output % i_update_interval == 0 && i_frame_output )
-            Print_status( i_start, i_frame_output, i_frame_total, i_file, param, last_pts );
+            Print_status( i_start, i_frame_output, i_frame_total, i_file, param, 2 * last_dts - prev_dts - first_dts );
     }
     /* Flush delayed frames */
     while( !b_ctrl_c && x264_encoder_delayed_frames( h ) )
     {
-        i_frame_size = Encode_frame( h, opt->hout, NULL, &last_pts );
+        prev_dts = last_dts;
+        i_frame_size = Encode_frame( h, opt->hout, NULL, &last_dts );
         if( i_frame_size < 0 )
             return -1;
         i_file += i_frame_size;
         if( i_frame_size )
+        {
             i_frame_output++;
+            if( i_frame_output == 1 )
+                first_dts = prev_dts = last_dts;
+        }
         if( opt->b_progress && i_frame_output % i_update_interval == 0 && i_frame_output )
-            Print_status( i_start, i_frame_output, i_frame_total, i_file, param, last_pts );
+            Print_status( i_start, i_frame_output, i_frame_total, i_file, param, 2 * last_dts - prev_dts - first_dts );
     }
     if( pts_warning_cnt >= MAX_PTS_WARNING && param->i_log_level < X264_LOG_DEBUG )
         fprintf( stderr, "x264 [warning]: %d suppressed nonmonotonic pts warnings\n", pts_warning_cnt-MAX_PTS_WARNING );

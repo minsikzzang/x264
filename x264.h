@@ -35,7 +35,7 @@
 
 #include <stdarg.h>
 
-#define X264_BUILD 92
+#define X264_BUILD 95
 
 /* x264_t:
  *      opaque handler for encoder */
@@ -101,6 +101,7 @@ typedef struct x264_t x264_t;
 #define X264_B_PYRAMID_NONE          0
 #define X264_B_PYRAMID_STRICT        1
 #define X264_B_PYRAMID_NORMAL        2
+#define X264_KEYINT_MIN_AUTO         0
 
 static const char * const x264_direct_pred_names[] = { "none", "spatial", "temporal", "auto", 0 };
 static const char * const x264_motion_est_names[] = { "dia", "hex", "umh", "esa", "tesa", 0 };
@@ -206,9 +207,6 @@ typedef struct x264_param_t
         int         i_colmatrix;
         int         i_chroma_loc;    /* both top & bottom */
     } vui;
-
-    int         i_fps_num;
-    int         i_fps_den;
 
     /* Bitstream parameters */
     int         i_frame_reference;  /* Maximum number of reference frames */
@@ -329,8 +327,10 @@ typedef struct x264_param_t
                                  * otherwise place size (4 bytes) before NAL units. */
     int i_sps_id;               /* SPS and PPS id number */
     int b_vfr_input;            /* VFR input */
-    int i_timebase_num;         /* Timebase numerator */
-    int i_timebase_den;         /* Timebase denominator */
+    uint32_t i_fps_num;
+    uint32_t i_fps_den;
+    uint32_t i_timebase_num;    /* Timebase numerator */
+    uint32_t i_timebase_den;    /* Timebase denominator */
     int b_dts_compress;         /* DTS compression: this algorithm eliminates negative DTS
                                  * by compressing them to be less than the second PTS.
                                  * Warning: this will change the timebase! */
@@ -639,5 +639,13 @@ void    x264_encoder_close  ( x264_t * );
  *      return the number of currently delayed (buffered) frames
  *      this should be used at the end of the stream, to know when you have all the encoded frames. */
 int     x264_encoder_delayed_frames( x264_t * );
+/* x264_encoder_intra_refresh:
+ *      If an intra refresh is not in progress, begin one with the next P-frame.
+ *      If an intra refresh is in progress, begin one as soon as the current one finishes.
+ *      Requires that b_intra_refresh be set.
+ *      Useful for interactive streaming where the client can tell the server that packet loss has
+ *      occurred.  In this case, keyint can be set to an extremely high value so that intra refreshes
+ *      only occur when calling x264_encoder_intra_refresh. */
+void    x264_encoder_intra_refresh( x264_t * );
 
 #endif

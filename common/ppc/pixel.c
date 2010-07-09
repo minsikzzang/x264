@@ -24,6 +24,7 @@
 #include "common/common.h"
 #include "ppccommon.h"
 
+#if !X264_HIGH_BIT_DEPTH
 /***********************************************************************
  * SAD routines
  **********************************************************************/
@@ -153,7 +154,7 @@ static int pixel_satd_4x4_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 1 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -207,7 +208,7 @@ static int pixel_satd_4x8_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 1 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -261,7 +262,7 @@ static int pixel_satd_8x4_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 1 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -321,7 +322,7 @@ static int pixel_satd_8x8_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 3 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -405,7 +406,7 @@ static int pixel_satd_8x16_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 3 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -489,7 +490,7 @@ static int pixel_satd_16x8_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 3 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 /***********************************************************************
@@ -615,7 +616,7 @@ static int pixel_satd_16x16_altivec( uint8_t *pix1, int i_pix1,
     satdv = vec_splat( satdv, 3 );
     vec_ste( satdv, 0, &i_satd );
 
-    return i_satd / 2;
+    return i_satd >> 1;
 }
 
 
@@ -1900,9 +1901,9 @@ static const vec_u8_t hadamard_permtab[] =
 
 static uint64_t x264_pixel_hadamard_ac_16x16_altivec( uint8_t *pix, int stride )
 {
-    int index =  ((uintptr_t)pix & 8) >> 3;
-    vec_u8_t permh = hadamard_permtab[index];
-    vec_u8_t perml = hadamard_permtab[!index];
+    int idx =  ((uintptr_t)pix & 8) >> 3;
+    vec_u8_t permh = hadamard_permtab[idx];
+    vec_u8_t perml = hadamard_permtab[!idx];
     uint64_t sum = pixel_hadamard_ac_altivec( pix, stride, permh );
     sum += pixel_hadamard_ac_altivec( pix+8, stride, perml );
     sum += pixel_hadamard_ac_altivec( pix+8*stride, stride, permh );
@@ -1912,9 +1913,9 @@ static uint64_t x264_pixel_hadamard_ac_16x16_altivec( uint8_t *pix, int stride )
 
 static uint64_t x264_pixel_hadamard_ac_16x8_altivec( uint8_t *pix, int stride )
 {
-    int index =  ((uintptr_t)pix & 8) >> 3;
-    vec_u8_t permh = hadamard_permtab[index];
-    vec_u8_t perml = hadamard_permtab[!index];
+    int idx =  ((uintptr_t)pix & 8) >> 3;
+    vec_u8_t permh = hadamard_permtab[idx];
+    vec_u8_t perml = hadamard_permtab[!idx];
     uint64_t sum = pixel_hadamard_ac_altivec( pix, stride, permh );
     sum += pixel_hadamard_ac_altivec( pix+8, stride, perml );
     return ((sum>>34)<<32) + ((uint32_t)sum>>1);
@@ -1979,12 +1980,14 @@ static void ssim_4x4x2_core_altivec( const uint8_t *pix1, int stride1,
     sums[0][3] = temp[0];
     sums[1][3] = temp[1];
 }
+#endif // !X264_HIGH_BIT_DEPTH
 
 /****************************************************************************
  * x264_pixel_init:
  ****************************************************************************/
 void x264_pixel_altivec_init( x264_pixel_function_t *pixf )
 {
+#if !X264_HIGH_BIT_DEPTH
     pixf->sad[PIXEL_16x16]  = pixel_sad_16x16_altivec;
     pixf->sad[PIXEL_8x16]   = pixel_sad_8x16_altivec;
     pixf->sad[PIXEL_16x8]   = pixel_sad_16x8_altivec;
@@ -2023,4 +2026,5 @@ void x264_pixel_altivec_init( x264_pixel_function_t *pixf )
     pixf->hadamard_ac[PIXEL_8x8]   = x264_pixel_hadamard_ac_8x8_altivec;
 
     pixf->ssim_4x4x2_core = ssim_4x4x2_core_altivec;
+#endif // !X264_HIGH_BIT_DEPTH
 }

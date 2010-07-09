@@ -21,7 +21,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
-#include "muxers.h"
+#include "input.h"
 
 extern cli_input_t input;
 
@@ -30,10 +30,9 @@ typedef struct
     cli_input_t input;
     hnd_t p_handle;
     x264_picture_t pic;
-    x264_pthread_t tid;
+    x264_threadpool_t *pool;
     int next_frame;
     int frame_total;
-    int in_progress;
     struct thread_input_arg_t *next_args;
 } thread_hnd_t;
 
@@ -48,14 +47,10 @@ typedef struct thread_input_arg_t
 static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, cli_input_opt_t *opt )
 {
     thread_hnd_t *h = malloc( sizeof(thread_hnd_t) );
-    if( !h || input.picture_alloc( &h->pic, info->csp, info->width, info->height ) )
-    {
-        fprintf( stderr, "x264 [error]: malloc failed\n" );
-        return -1;
-    }
+    FAIL_IF_ERR( !h || input.picture_alloc( &h->pic, info->csp, info->width, info->height ),
+                 "x264", "malloc failed\n" )
     h->input = input;
     h->p_handle = *p_handle;
-    h->in_progress = 0;
     h->next_frame = -1;
     h->next_args = malloc( sizeof(thread_input_arg_t) );
     if( !h->next_args )
@@ -65,6 +60,9 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     h->frame_total = input.get_frame_total( h->p_handle );
     thread_input.picture_alloc = h->input.picture_alloc;
     thread_input.picture_clean = h->input.picture_clean;
+
+    if( x264_threadpool_init( &h->pool, 1, NULL, NULL ) )
+        return -1;
 
     *p_handle = h;
     return 0;
@@ -88,9 +86,8 @@ static int read_frame( x264_picture_t *p_pic, hnd_t handle, int i_frame )
 
     if( h->next_frame >= 0 )
     {
-        x264_pthread_join( h->tid, NULL );
+        x264_threadpool_wait( h->pool, h->next_args );
         ret |= h->next_args->status;
-        h->in_progress = 0;
     }
 
     if( h->next_frame == i_frame )
@@ -103,9 +100,7 @@ static int read_frame( x264_picture_t *p_pic, hnd_t handle, int i_frame )
         h->next_frame =
         h->next_args->i_frame = i_frame+1;
         h->next_args->pic = &h->pic;
-        if( x264_pthread_create( &h->tid, NULL, (void*)read_frame_thread_int, h->next_args ) )
-            return -1;
-        h->in_progress = 1;
+        x264_threadpool_run( h->pool, (void*)read_frame_thread_int, h->next_args );
     }
     else
         h->next_frame = -1;
@@ -124,8 +119,7 @@ static int release_frame( x264_picture_t *pic, hnd_t handle )
 static int close_file( hnd_t handle )
 {
     thread_hnd_t *h = handle;
-    if( h->in_progress )
-        x264_pthread_join( h->tid, NULL );
+    x264_threadpool_delete( h->pool );
     h->input.close_file( h->p_handle );
     h->input.picture_clean( &h->pic );
     free( h->next_args );

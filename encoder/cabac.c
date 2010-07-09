@@ -262,9 +262,9 @@ static void x264_cabac_mb_qp_delta( x264_t *h, x264_cabac_t *cb )
     if( i_dqp != 0 )
     {
         int val = i_dqp <= 0 ? (-2*i_dqp) : (2*i_dqp - 1);
-        /* dqp is interpreted modulo 52 */
-        if( val >= 51 && val != 52 )
-            val = 103 - val;
+        /* dqp is interpreted modulo (QP_MAX+1) */
+        if( val >= QP_MAX && val != QP_MAX+1 )
+            val = 2*QP_MAX+1 - val;
         do
         {
             x264_cabac_encode_decision( cb, 60 + ctx, 1 );
@@ -551,7 +551,7 @@ static const uint8_t coeff_abs_level_transition[2][8] = {
 static const uint8_t count_cat_m1[5] = {15, 14, 15, 3, 14};
 
 #if !RDO_SKIP_BS
-static void block_residual_write_cabac( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, int16_t *l )
+static void block_residual_write_cabac( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, dctcoef *l )
 {
     const int i_ctx_sig = significant_coeff_flag_offset[h->mb.b_interlaced][i_ctxBlockCat];
     const int i_ctx_last = last_coeff_flag_offset[h->mb.b_interlaced][i_ctxBlockCat];
@@ -645,7 +645,7 @@ static void block_residual_write_cabac( x264_t *h, x264_cabac_t *cb, int i_ctxBl
  * this is slightly incorrect because the sigmap is not reversible
  * (contexts are repeated).  However, there is nearly no quality penalty
  * for this (~0.001db) and the speed boost (~30%) is worth it. */
-static void ALWAYS_INLINE block_residual_write_cabac_internal( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, int16_t *l, int b_8x8 )
+static void ALWAYS_INLINE block_residual_write_cabac_internal( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, dctcoef *l, int b_8x8 )
 {
     const int i_ctx_sig = significant_coeff_flag_offset[h->mb.b_interlaced][i_ctxBlockCat];
     const int i_ctx_last = last_coeff_flag_offset[h->mb.b_interlaced][i_ctxBlockCat];
@@ -726,11 +726,11 @@ static void ALWAYS_INLINE block_residual_write_cabac_internal( x264_t *h, x264_c
     }
 }
 
-static void block_residual_write_cabac_8x8( x264_t *h, x264_cabac_t *cb, int16_t *l )
+static void block_residual_write_cabac_8x8( x264_t *h, x264_cabac_t *cb, dctcoef *l )
 {
     block_residual_write_cabac_internal( h, cb, DCT_LUMA_8x8, l, 1 );
 }
-static void block_residual_write_cabac( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, int16_t *l )
+static void block_residual_write_cabac( x264_t *h, x264_cabac_t *cb, int i_ctxBlockCat, dctcoef *l )
 {
     block_residual_write_cabac_internal( h, cb, i_ctxBlockCat, l, 0 );
 }
@@ -767,19 +767,19 @@ void x264_macroblock_write_cabac( x264_t *h, x264_cabac_t *cb )
         i_mb_pos_tex = x264_cabac_pos( cb );
         h->stat.frame.i_mv_bits += i_mb_pos_tex - i_mb_pos_start;
 
-        memcpy( cb->p, h->mb.pic.p_fenc[0], 256 );
-        cb->p += 256;
-        for( int i = 0; i < 8; i++ )
-            memcpy( cb->p + i*8, h->mb.pic.p_fenc[1] + i*FENC_STRIDE, 8 );
-        cb->p += 64;
-        for( int i = 0; i < 8; i++ )
-            memcpy( cb->p + i*8, h->mb.pic.p_fenc[2] + i*FENC_STRIDE, 8 );
-        cb->p += 64;
+        bs_t s;
+        bs_init( &s, cb->p, cb->p_end - cb->p );
 
-        cb->i_low   = 0;
-        cb->i_range = 0x01FE;
-        cb->i_queue = -1;
-        cb->i_bytes_outstanding = 0;
+        for( int i = 0; i < 256; i++ )
+            bs_write( &s, BIT_DEPTH, h->mb.pic.p_fenc[0][i] );
+        for( int ch = 0; ch < 2; ch++ )
+            for( int i = 0; i < 8; i++ )
+                for( int j = 0; j < 8; j++ )
+                    bs_write( &s, BIT_DEPTH, h->mb.pic.p_fenc[ch][i*FENC_STRIDE+j] );
+
+        bs_flush( &s );
+        cb->p = s.p;
+        x264_cabac_encode_init_core( cb );
 
         h->stat.frame.i_tex_bits += x264_cabac_pos( cb ) - i_mb_pos_tex;
         return;
@@ -956,7 +956,7 @@ void x264_macroblock_write_cabac( x264_t *h, x264_cabac_t *cb )
         else
         {
             for( int i = 0; i < 16; i++ )
-                if( h->mb.i_cbp_luma & ( 1 << ( i / 4 ) ) )
+                if( h->mb.i_cbp_luma & ( 1 << ( i >> 2 ) ) )
                     block_residual_write_cabac_cbf( h, cb, DCT_LUMA_4x4, i, h->dct.luma4x4[i], b_intra );
         }
 

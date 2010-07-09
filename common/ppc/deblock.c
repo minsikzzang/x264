@@ -21,6 +21,7 @@
 #include "common/common.h"
 #include "ppccommon.h"
 
+#if !X264_HIGH_BIT_DEPTH
 #define transpose4x16(r0, r1, r2, r3)        \
 {                                            \
     register vec_u8_t r4;                    \
@@ -45,7 +46,7 @@ static inline void write16x4( uint8_t *dst, int dst_stride,
 {
     ALIGNED_16(unsigned char result[64]);
     uint32_t *src_int = (uint32_t *)result, *dst_int = (uint32_t *)dst;
-    int int_dst_stride = dst_stride/4;
+    int int_dst_stride = dst_stride >> 2;
 
     vec_st(r0, 0, result);
     vec_st(r1, 16, result);
@@ -292,3 +293,4 @@ void x264_deblock_h_luma_altivec( uint8_t *pix, int stride, int alpha, int beta,
     transpose4x16(line1, line2, line3, line4);
     write16x4(pix-2, stride, line1, line2, line3, line4);
 }
+#endif // !X264_HIGH_BIT_DEPTH

@@ -1,5 +1,5 @@
 /*****************************************************************************
- * bs.h :
+ * bitstream.h: h264 encoder library
  *****************************************************************************
  * Copyright (C) 2003-2008 x264 project
  *
@@ -53,7 +53,7 @@ typedef struct bs_s
 typedef struct
 {
     int     last;
-    int16_t level[16];
+    dctcoef level[16];
     uint8_t run[16];
 } x264_run_level_t;
 
@@ -62,6 +62,13 @@ extern const vlc_t x264_coeff_token[5][16][4];
 extern const vlc_t x264_total_zeros[15][16];
 extern const vlc_t x264_total_zeros_dc[3][4];
 extern const vlc_t x264_run_before[7][16];
+
+typedef struct
+{
+    uint8_t *(*nal_escape) ( uint8_t *dst, uint8_t *src, uint8_t *end );
+} x264_bitstream_function_t;
+
+void x264_bitstream_init( int cpu, x264_bitstream_function_t *pf );
 
 /* A larger level table size theoretically could help a bit at extremely
  * high bitrates, but the cost in cache is usually too high for it to be
@@ -89,7 +96,7 @@ static inline int bs_pos( bs_t *s )
 static inline void bs_flush( bs_t *s )
 {
     M32( s->p ) = endian_fix32( s->cur_bits << (s->i_left&31) );
-    s->p += WORD_SIZE - s->i_left / 8;
+    s->p += WORD_SIZE - (s->i_left >> 3);
     s->i_left = WORD_SIZE*8;
 }
 /* The inverse of bs_flush: prepare the bitstream to be written to again. */
@@ -113,7 +120,7 @@ static inline void bs_write( bs_t *s, int i_count, uint32_t i_bits )
         s->i_left -= i_count;
         if( s->i_left <= 32 )
         {
-#ifdef WORDS_BIGENDIAN
+#if WORDS_BIGENDIAN
             M32( s->p ) = s->cur_bits >> (32 - s->i_left);
 #else
             M32( s->p ) = endian_fix( s->cur_bits << s->i_left );

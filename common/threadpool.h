@@ -1,9 +1,7 @@
 /*****************************************************************************
- * x264dll: x264 DLLMain for win32
+ * threadpool.h: x264 threadpool module
  *****************************************************************************
- * Copyright (C) 2009 x264 project
- *
- * Authors: Anton Mitrofanov <BugMaster@narod.ru>
+ * Copyright (C) 2010 Steven Walters <kemuri9@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -20,32 +18,22 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
-#include "common/common.h"
-#include <windows.h>
+#ifndef X264_THREADPOOL_H
+#define X264_THREADPOOL_H
 
-/* Callback for our DLL so we can initialize pthread */
-BOOL WINAPI DllMain( HANDLE hinstDLL, DWORD fdwReason, LPVOID lpvReserved )
-{
-#if PTW32_STATIC_LIB
-    switch( fdwReason )
-    {
-        case DLL_PROCESS_ATTACH:
-            pthread_win32_process_attach_np();
+typedef struct x264_threadpool_t x264_threadpool_t;
 
-        case DLL_THREAD_ATTACH:
-            pthread_win32_thread_attach_np();
-            break;
-
-        case DLL_THREAD_DETACH:
-            pthread_win32_thread_detach_np();
-            break;
-
-        case DLL_PROCESS_DETACH:
-            pthread_win32_thread_detach_np();
-            pthread_win32_process_detach_np();
-            break;
-    }
+#if HAVE_PTHREAD
+int   x264_threadpool_init( x264_threadpool_t **p_pool, int threads,
+                            void (*init_func)(void *), void *init_arg );
+void  x264_threadpool_run( x264_threadpool_t *pool, void *(*func)(void *), void *arg );
+void *x264_threadpool_wait( x264_threadpool_t *pool, void *arg );
+void  x264_threadpool_delete( x264_threadpool_t *pool );
+#else
+#define x264_threadpool_init(p,t,f,a) -1
+#define x264_threadpool_run(p,f,a)
+#define x264_threadpool_wait(p,a)     NULL
+#define x264_threadpool_delete(p)
 #endif
 
-    return TRUE;
-}
+#endif

@@ -21,10 +21,10 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
  *****************************************************************************/
 
-#include "muxers.h"
+#include "output.h"
 #include <gpac/isomedia.h>
 
-#ifdef HAVE_GF_MALLOC
+#if HAVE_GF_MALLOC
 #undef malloc
 #undef free
 #define malloc gf_malloc
@@ -61,12 +61,12 @@ static void recompute_bitrate_mp4( GF_ISOFile *p_file, int i_track )
 
     timescale = gf_isom_get_media_timescale( p_file, i_track );
     count = gf_isom_get_sample_count( p_file, i_track );
-    for( int i = 0; i < count; i++ )
+    for( u32 i = 0; i < count; i++ )
     {
         GF_ISOSample *samp = gf_isom_get_sample_info( p_file, i_track, i+1, &di, &offset );
         if( !samp )
         {
-            fprintf( stderr, "mp4 [error]: failure reading back frame %u\n", i );
+            x264_cli_log( "mp4", X264_LOG_ERROR, "failure reading back frame %u\n", i );
             break;
         }
 
@@ -112,6 +112,7 @@ static int close_file( hnd_t handle, int64_t largest_pts, int64_t second_largest
         if( p_mp4->p_sample->data )
             free( p_mp4->p_sample->data );
 
+        p_mp4->p_sample->dataLength = 0;
         gf_isom_sample_del( &p_mp4->p_sample );
     }
 
@@ -135,7 +136,7 @@ static int close_file( hnd_t handle, int64_t largest_pts, int64_t second_largest
          * The reason is that an Edit Box maps the presentation time-line to the media time-line.
          * Any demuxers should follow the Edit Box if it exists. */
         GF_ISOSample *sample = gf_isom_get_sample_info( p_mp4->p_file, p_mp4->i_track, 1, NULL, NULL );
-        if( sample->CTS_Offset > 0 )
+        if( sample && sample->CTS_Offset > 0 )
         {
             uint32_t mvhd_timescale = gf_isom_get_timescale( p_mp4->p_file );
             uint64_t tkhd_duration = (uint64_t)( mdhd_duration * ( (double)mvhd_timescale / p_mp4->i_time_res ) );
@@ -162,11 +163,7 @@ static int open_file( char *psz_filename, hnd_t *p_handle )
     FILE *fh = fopen( psz_filename, "w" );
     if( !fh )
         return -1;
-    else if( !x264_is_regular_file( fh ) )
-    {
-        fprintf( stderr, "mp4 [error]: MP4 output is incompatible with non-regular file `%s'\n", psz_filename );
-        return -1;
-    }
+    FAIL_IF_ERR( !x264_is_regular_file( fh ), "mp4", "MP4 output is incompatible with non-regular file `%s'\n", psz_filename )
     fclose( fh );
 
     if( !(p_mp4 = malloc( sizeof(mp4_hnd_t) )) )

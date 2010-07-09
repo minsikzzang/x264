@@ -25,10 +25,12 @@
 #ifndef X264_INPUT_H
 #define X264_INPUT_H
 
+#include "x264cli.h"
+
 /* options that are used by only some demuxers */
 typedef struct
 {
-    char *index;
+    char *index_file;
     char *resolution; /* resolution string parsed by raw yuv input */
     char *timebase;
     int seek;

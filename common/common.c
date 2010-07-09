@@ -26,7 +26,7 @@
 #include <stdarg.h>
 #include <ctype.h>
 
-#ifdef HAVE_MALLOC_H
+#if HAVE_MALLOC_H
 #include <malloc.h>
 #endif
 
@@ -91,10 +91,10 @@ void x264_param_default( x264_param_t *param )
     param->rc.i_vbv_max_bitrate = 0;
     param->rc.i_vbv_buffer_size = 0;
     param->rc.f_vbv_buffer_init = 0.9;
-    param->rc.i_qp_constant = 23;
-    param->rc.f_rf_constant = 23;
+    param->rc.i_qp_constant = 23 + QP_BD_OFFSET;
+    param->rc.f_rf_constant = 23 + QP_BD_OFFSET;
     param->rc.i_qp_min = 10;
-    param->rc.i_qp_max = 51;
+    param->rc.i_qp_max = QP_MAX;
     param->rc.i_qp_step = 4;
     param->rc.f_ip_factor = 1.4;
     param->rc.f_pb_factor = 1.3;
@@ -160,6 +160,7 @@ void x264_param_default( x264_param_t *param )
     param->i_nal_hrd = X264_NAL_HRD_NONE;
     param->b_tff = 1;
     param->b_pic_struct = 0;
+    param->b_fake_interlaced = 0;
 }
 
 static int x264_param_apply_preset( x264_param_t *param, const char *preset )
@@ -182,6 +183,8 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->i_bframe_adaptive = X264_B_ADAPT_NONE;
         param->rc.b_mb_tree = 0;
         param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+        param->analyse.b_weighted_bipred = 0;
+        param->rc.i_lookahead = 0;
     }
     else if( !strcasecmp( preset, "superfast" ) )
     {
@@ -193,6 +196,7 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->analyse.i_trellis = 0;
         param->rc.b_mb_tree = 0;
         param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+        param->rc.i_lookahead = 0;
     }
     else if( !strcasecmp( preset, "veryfast" ) )
     {
@@ -201,8 +205,8 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->i_frame_reference = 1;
         param->analyse.b_mixed_references = 0;
         param->analyse.i_trellis = 0;
-        param->rc.b_mb_tree = 0;
         param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+        param->rc.i_lookahead = 10;
     }
     else if( !strcasecmp( preset, "faster" ) )
     {
@@ -279,7 +283,7 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
 
 static int x264_param_apply_tune( x264_param_t *param, const char *tune )
 {
-    char *tmp = x264_malloc( strlen( tune ) );
+    char *tmp = x264_malloc( strlen( tune ) + 1 );
     if( !tmp )
         return -1;
     tmp = strcpy( tmp, tune );
@@ -353,6 +357,7 @@ static int x264_param_apply_tune( x264_param_t *param, const char *tune )
             param->i_bframe = 0;
             param->b_sliced_threads = 1;
             param->b_vfr_input = 0;
+            param->rc.b_mb_tree = 0;
         }
         else if( !strncasecmp( s, "touhou", 6 ) )
         {
@@ -413,6 +418,15 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
     if( !profile )
         return 0;
 
+#if BIT_DEPTH > 8
+    if( !strcasecmp( profile, "baseline" ) || !strcasecmp( profile, "main" ) ||
+        !strcasecmp( profile, "high" ) )
+    {
+        x264_log( NULL, X264_LOG_ERROR, "%s profile doesn't support a bit depth of %d.\n", profile, BIT_DEPTH );
+        return -1;
+    }
+#endif
+
     if( !strcasecmp( profile, "baseline" ) )
     {
         param->analyse.b_transform_8x8 = 0;
@@ -425,13 +439,18 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
             x264_log( NULL, X264_LOG_ERROR, "baseline profile doesn't support interlacing\n" );
             return -1;
         }
+        if( param->b_fake_interlaced )
+        {
+            x264_log( NULL, X264_LOG_ERROR, "baseline profile doesn't support fake interlacing\n" );
+            return -1;
+        }
     }
     else if( !strcasecmp( profile, "main" ) )
     {
         param->analyse.b_transform_8x8 = 0;
         param->i_cqm_preset = X264_CQM_FLAT;
     }
-    else if( !strcasecmp( profile, "high" ) )
+    else if( !strcasecmp( profile, "high" ) || !strcasecmp( profile, "high10" ) )
     {
         /* Default */
     }
@@ -624,11 +643,14 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
     }
     OPT2("ref", "frameref")
         p->i_frame_reference = atoi(value);
+    OPT("dpb-size")
+        p->i_dpb_size = atoi(value);
     OPT("keyint")
     {
-        p->i_keyint_max = atoi(value);
-        if( p->i_keyint_min > p->i_keyint_max )
-            p->i_keyint_min = p->i_keyint_max;
+        if( strstr( value, "infinite" ) )
+            p->i_keyint_max = X264_KEYINT_MAX_INFINITE;
+        else
+            p->i_keyint_max = atoi(value);
     }
     OPT2("min-keyint", "keyint-min")
     {
@@ -667,6 +689,15 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         {
             b_error = 0;
             p->i_bframe_pyramid = atoi(value);
+        }
+    }
+    OPT("open-gop")
+    {
+        b_error |= parse_enum( value, x264_open_gop_names, &p->i_open_gop );
+        if( b_error )
+        {
+            b_error = 0;
+            p->i_open_gop = atoi(value);
         }
     }
     OPT("nf")
@@ -776,7 +807,7 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
     }
     OPT("log")
         p->i_log_level = atoi(value);
-#ifdef HAVE_VISUALIZE
+#if HAVE_VISUALIZE
     OPT("visualize")
         p->b_visualize = atobool(value);
 #endif
@@ -930,6 +961,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         b_error |= parse_enum( value, x264_nal_hrd_names, &p->i_nal_hrd );
     OPT("pic-struct")
         p->b_pic_struct = atobool(value);
+    OPT("fake-interlaced")
+        p->b_fake_interlaced = atobool(value);
     else
         return X264_PARAM_BAD_NAME;
 #undef OPT
@@ -988,12 +1021,22 @@ static void x264_log_default( void *p_unused, int i_level, const char *psz_fmt, 
 }
 
 /****************************************************************************
+ * x264_picture_init:
+ ****************************************************************************/
+void x264_picture_init( x264_picture_t *pic )
+{
+    memset( pic, 0, sizeof( x264_picture_t ) );
+    pic->i_type = X264_TYPE_AUTO;
+    pic->i_qpplus1 = 0;
+    pic->i_pic_struct = PIC_STRUCT_AUTO;
+}
+
+/****************************************************************************
  * x264_picture_alloc:
  ****************************************************************************/
 int x264_picture_alloc( x264_picture_t *pic, int i_csp, int i_width, int i_height )
 {
-    pic->i_type = X264_TYPE_AUTO;
-    pic->i_qpplus1 = 0;
+    x264_picture_init( pic );
     pic->img.i_csp = i_csp;
     pic->img.i_plane = 3;
     pic->img.plane[0] = x264_malloc( 3 * i_width * i_height / 2 );
@@ -1004,8 +1047,6 @@ int x264_picture_alloc( x264_picture_t *pic, int i_csp, int i_width, int i_heigh
     pic->img.i_stride[0] = i_width;
     pic->img.i_stride[1] = i_width / 2;
     pic->img.i_stride[2] = i_width / 2;
-    pic->param = NULL;
-    pic->i_pic_struct = PIC_STRUCT_AUTO;
     return 0;
 }
 
@@ -1021,78 +1062,23 @@ void x264_picture_clean( x264_picture_t *pic )
 }
 
 /****************************************************************************
- * x264_nal_encode:
- ****************************************************************************/
-int x264_nal_encode( uint8_t *dst, x264_nal_t *nal, int b_annexb, int b_long_startcode )
-{
-    uint8_t *src = nal->p_payload;
-    uint8_t *end = nal->p_payload + nal->i_payload;
-    uint8_t *orig_dst = dst;
-    int i_count = 0, size;
-
-    if( b_annexb )
-    {
-        if( b_long_startcode )
-            *dst++ = 0x00;
-        *dst++ = 0x00;
-        *dst++ = 0x00;
-        *dst++ = 0x01;
-    }
-    else /* save room for size later */
-        dst += 4;
-
-    /* nal header */
-    *dst++ = ( 0x00 << 7 ) | ( nal->i_ref_idc << 5 ) | nal->i_type;
-
-    while( src < end )
-    {
-        if( i_count == 2 && *src <= 0x03 )
-        {
-            *dst++ = 0x03;
-            i_count = 0;
-        }
-        if( *src == 0 )
-            i_count++;
-        else
-            i_count = 0;
-        *dst++ = *src++;
-    }
-    size = (dst - orig_dst) - 4;
-
-    /* Write the size header for mp4/etc */
-    if( !b_annexb )
-    {
-        /* Size doesn't include the size of the header we're writing now. */
-        orig_dst[0] = size>>24;
-        orig_dst[1] = size>>16;
-        orig_dst[2] = size>> 8;
-        orig_dst[3] = size>> 0;
-    }
-
-    return size+4;
-}
-
-
-
-/****************************************************************************
  * x264_malloc:
  ****************************************************************************/
 void *x264_malloc( int i_size )
 {
     uint8_t *align_buf = NULL;
-#ifdef SYS_MACOSX
-    /* Mac OS X always returns 16 bytes aligned memory */
+#if SYS_MACOSX || (SYS_MINGW && ARCH_X86_64)
+    /* Mac OS X and Win x64 always returns 16 byte aligned memory */
     align_buf = malloc( i_size );
-#elif defined( HAVE_MALLOC_H )
+#elif HAVE_MALLOC_H
     align_buf = memalign( 16, i_size );
 #else
-    uint8_t *buf = malloc( i_size + 15 + sizeof(void **) + sizeof(int) );
+    uint8_t *buf = malloc( i_size + 15 + sizeof(void **) );
     if( buf )
     {
-        align_buf = buf + 15 + sizeof(void **) + sizeof(int);
+        align_buf = buf + 15 + sizeof(void **);
         align_buf -= (intptr_t) align_buf & 15;
         *( (void **) ( align_buf - sizeof(void **) ) ) = buf;
-        *( (int *) ( align_buf - sizeof(void **) - sizeof(int) ) ) = i_size;
     }
 #endif
     if( !align_buf )
@@ -1107,7 +1093,7 @@ void x264_free( void *p )
 {
     if( p )
     {
-#if defined( HAVE_MALLOC_H ) || defined( SYS_MACOSX )
+#if HAVE_MALLOC_H || SYS_MACOSX || (SYS_MINGW && ARCH_X86_64)
         free( p );
 #else
         free( *( ( ( void **) p ) - 1 ) );
@@ -1118,23 +1104,27 @@ void x264_free( void *p )
 /****************************************************************************
  * x264_reduce_fraction:
  ****************************************************************************/
-void x264_reduce_fraction( uint32_t *n, uint32_t *d )
-{
-    uint32_t a = *n;
-    uint32_t b = *d;
-    uint32_t c;
-    if( !a || !b )
-        return;
-    c = a % b;
-    while(c)
-    {
-        a = b;
-        b = c;
-        c = a % b;
-    }
-    *n /= b;
-    *d /= b;
+#define REDUCE_FRACTION( name, type )\
+void name( type *n, type *d )\
+{                   \
+    type a = *n;    \
+    type b = *d;    \
+    type c;         \
+    if( !a || !b )  \
+        return;     \
+    c = a % b;      \
+    while( c )      \
+    {               \
+        a = b;      \
+        b = c;      \
+        c = a % b;  \
+    }               \
+    *n /= b;        \
+    *d /= b;        \
 }
+
+REDUCE_FRACTION( x264_reduce_fraction  , uint32_t )
+REDUCE_FRACTION( x264_reduce_fraction64, uint64_t )
 
 /****************************************************************************
  * x264_slurp_file:
@@ -1217,16 +1207,16 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, " slice_max_mbs=%d", p->i_slice_max_mbs );
     s += sprintf( s, " nr=%d", p->analyse.i_noise_reduction );
     s += sprintf( s, " decimate=%d", p->analyse.b_dct_decimate );
-    s += sprintf( s, " interlaced=%s", p->b_interlaced ? p->b_tff ? "tff" : "bff" : "0" );
+    s += sprintf( s, " interlaced=%s", p->b_interlaced ? p->b_tff ? "tff" : "bff" : p->b_fake_interlaced ? "fake" : "0" );
 
     s += sprintf( s, " constrained_intra=%d", p->b_constrained_intra );
 
     s += sprintf( s, " bframes=%d", p->i_bframe );
     if( p->i_bframe )
     {
-        s += sprintf( s, " b_pyramid=%d b_adapt=%d b_bias=%d direct=%d weightb=%d",
+        s += sprintf( s, " b_pyramid=%d b_adapt=%d b_bias=%d direct=%d weightb=%d open_gop=%d",
                       p->i_bframe_pyramid, p->i_bframe_adaptive, p->i_bframe_bias,
-                      p->analyse.i_direct_mv_pred, p->analyse.b_weighted_bipred );
+                      p->analyse.i_direct_mv_pred, p->analyse.b_weighted_bipred, p->i_open_gop );
     }
     s += sprintf( s, " weightp=%d", p->analyse.i_weighted_pred > 0 ? p->analyse.i_weighted_pred : 0 );
 

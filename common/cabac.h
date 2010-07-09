@@ -51,7 +51,7 @@ extern const uint16_t x264_cabac_entropy[128];
 /* init the contexts given i_slice_type, the quantif and the model */
 void x264_cabac_context_init( x264_cabac_t *cb, int i_slice_type, int i_qp, int i_model );
 
-/* encoder only: */
+void x264_cabac_encode_init_core( x264_cabac_t *cb );
 void x264_cabac_encode_init ( x264_cabac_t *cb, uint8_t *p_data, uint8_t *p_end );
 void x264_cabac_encode_decision_c( x264_cabac_t *cb, int i_ctx, int b );
 void x264_cabac_encode_decision_asm( x264_cabac_t *cb, int i_ctx, int b );
@@ -62,7 +62,7 @@ void x264_cabac_encode_terminal_asm( x264_cabac_t *cb );
 void x264_cabac_encode_ue_bypass( x264_cabac_t *cb, int exp_bits, int val );
 void x264_cabac_encode_flush( x264_t *h, x264_cabac_t *cb );
 
-#ifdef HAVE_MMX
+#if HAVE_MMX
 #define x264_cabac_encode_decision x264_cabac_encode_decision_asm
 #define x264_cabac_encode_bypass x264_cabac_encode_bypass_asm
 #define x264_cabac_encode_terminal x264_cabac_encode_terminal_asm

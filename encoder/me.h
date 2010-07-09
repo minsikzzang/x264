@@ -38,9 +38,9 @@ typedef struct
     int      i_ref;
     const x264_weight_t *weight;
 
-    uint8_t *p_fref[6];
-    uint8_t *p_fref_w;
-    uint8_t *p_fenc[3];
+    pixel *p_fref[6];
+    pixel *p_fref_w;
+    pixel *p_fenc[3];
     uint16_t *integral;
     int      i_stride[2];
 
@@ -68,7 +68,7 @@ void x264_me_refine_bidir_rd( x264_t *h, x264_me_t *m0, x264_me_t *m1, int i_wei
 void x264_me_refine_bidir_satd( x264_t *h, x264_me_t *m0, x264_me_t *m1, int i_weight );
 uint64_t x264_rd_cost_part( x264_t *h, int i_lambda2, int i8, int i_pixel );
 
-extern uint16_t *x264_cost_mv_fpel[92][4];
+extern uint16_t *x264_cost_mv_fpel[LAMBDA_MAX+1][4];
 
 #define COPY1_IF_LT(x,y)\
 if((y)<(x))\

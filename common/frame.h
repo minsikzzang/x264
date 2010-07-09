@@ -35,6 +35,7 @@ typedef struct x264_frame
     int     i_type;
     int     i_qpplus1;
     int64_t i_pts;
+    int64_t i_dts;
     int64_t i_reordered_pts;
     int     i_duration;  /* in SPS time_scale units (i.e 2 * timebase units) used for vfr */
     int     i_cpb_duration;
@@ -64,18 +65,18 @@ typedef struct x264_frame
     int     i_stride_lowres;
     int     i_width_lowres;
     int     i_lines_lowres;
-    uint8_t *plane[3];
-    uint8_t *filtered[4]; /* plane[0], H, V, HV */
-    uint8_t *lowres[4]; /* half-size copy of input frame: Orig, H, V, HV */
+    pixel *plane[3];
+    pixel *filtered[4]; /* plane[0], H, V, HV */
+    pixel *lowres[4]; /* half-size copy of input frame: Orig, H, V, HV */
     uint16_t *integral;
 
     /* for unrestricted mv we allocate more data than needed
      * allocated data are stored in buffer */
-    uint8_t *buffer[4];
-    uint8_t *buffer_lowres[4];
+    pixel *buffer[4];
+    pixel *buffer_lowres[4];
 
     x264_weight_t weight[16][3]; /* [ref_index][plane] */
-    uint8_t *weighted[16]; /* plane[0] weighted of the reference frames */
+    pixel *weighted[16]; /* plane[0] weighted of the reference frames */
     int b_duplicate;
     struct x264_frame *orig;
 
@@ -118,8 +119,8 @@ typedef struct x264_frame
     uint16_t *i_inv_qscale_factor;
     int     b_scenecut; /* Set to zero if the frame cannot possibly be part of a real scenecut. */
     float   f_weighted_cost_delta[X264_BFRAME_MAX+2];
-    uint32_t i_pixel_sum;
-    uint64_t i_pixel_ssd;
+    uint32_t i_pixel_sum[3];
+    uint64_t i_pixel_ssd[3];
 
     /* hrd */
     x264_hrd_t hrd_timing;
@@ -143,6 +144,9 @@ typedef struct x264_frame
     int     i_pir_start_col;
     int     i_pir_end_col;
     int     i_frames_since_pir;
+
+    /* interactive encoder control */
+    int     b_corrupt;
 } x264_frame_t;
 
 /* synchronized frame list */
@@ -154,20 +158,19 @@ typedef struct
    x264_pthread_mutex_t     mutex;
    x264_pthread_cond_t      cv_fill;  /* event signaling that the list became fuller */
    x264_pthread_cond_t      cv_empty; /* event signaling that the list became emptier */
-} x264_synch_frame_list_t;
+} x264_sync_frame_list_t;
 
-typedef void (*x264_deblock_inter_t)( uint8_t *pix, int stride, int alpha, int beta, int8_t *tc0 );
-typedef void (*x264_deblock_intra_t)( uint8_t *pix, int stride, int alpha, int beta );
+typedef void (*x264_deblock_inter_t)( pixel *pix, int stride, int alpha, int beta, int8_t *tc0 );
+typedef void (*x264_deblock_intra_t)( pixel *pix, int stride, int alpha, int beta );
 typedef struct
 {
-    x264_deblock_inter_t deblock_v_luma;
-    x264_deblock_inter_t deblock_h_luma;
-    x264_deblock_inter_t deblock_v_chroma;
-    x264_deblock_inter_t deblock_h_chroma;
-    x264_deblock_intra_t deblock_v_luma_intra;
-    x264_deblock_intra_t deblock_h_luma_intra;
-    x264_deblock_intra_t deblock_v_chroma_intra;
-    x264_deblock_intra_t deblock_h_chroma_intra;
+    x264_deblock_inter_t deblock_luma[2];
+    x264_deblock_inter_t deblock_chroma[2];
+    x264_deblock_intra_t deblock_luma_intra[2];
+    x264_deblock_intra_t deblock_chroma_intra[2];
+    void (*deblock_strength) ( uint8_t nnz[X264_SCAN8_SIZE], int8_t ref[2][X264_SCAN8_LUMA_SIZE],
+                               int16_t mv[2][X264_SCAN8_LUMA_SIZE][2], uint8_t bs[2][4][4], int mvy_limit,
+                               int bframe );
 } x264_deblock_function_t;
 
 x264_frame_t *x264_frame_new( x264_t *h, int b_fdec );
@@ -180,7 +183,6 @@ void          x264_frame_expand_border_filtered( x264_t *h, x264_frame_t *frame,
 void          x264_frame_expand_border_lowres( x264_frame_t *frame );
 void          x264_frame_expand_border_mod16( x264_t *h, x264_frame_t *frame );
 
-void          x264_frame_deblock( x264_t *h );
 void          x264_frame_deblock_row( x264_t *h, int mb_y );
 
 void          x264_frame_filter( x264_t *h, x264_frame_t *frame, int mb_y, int b_end );
@@ -198,15 +200,16 @@ x264_frame_t *x264_frame_shift( x264_frame_t **list );
 void          x264_frame_push_unused( x264_t *h, x264_frame_t *frame );
 void          x264_frame_push_blank_unused( x264_t *h, x264_frame_t *frame );
 x264_frame_t *x264_frame_pop_blank_unused( x264_t *h );
-void x264_weight_scale_plane( x264_t *h, uint8_t *dst, int i_dst_stride, uint8_t *src, int i_src_stride,
+void x264_weight_scale_plane( x264_t *h, pixel *dst, int i_dst_stride, pixel *src, int i_src_stride,
                               int i_width, int i_height, x264_weight_t *w );
 x264_frame_t *x264_frame_pop_unused( x264_t *h, int b_fdec );
 void          x264_frame_sort( x264_frame_t **list, int b_dts );
 void          x264_frame_delete_list( x264_frame_t **list );
 
-int           x264_synch_frame_list_init( x264_synch_frame_list_t *slist, int nelem );
-void          x264_synch_frame_list_delete( x264_synch_frame_list_t *slist );
-void          x264_synch_frame_list_push( x264_synch_frame_list_t *slist, x264_frame_t *frame );
+int           x264_sync_frame_list_init( x264_sync_frame_list_t *slist, int nelem );
+void          x264_sync_frame_list_delete( x264_sync_frame_list_t *slist );
+void          x264_sync_frame_list_push( x264_sync_frame_list_t *slist, x264_frame_t *frame );
+x264_frame_t *x264_sync_frame_list_pop( x264_sync_frame_list_t *slist );
 
 #define x264_frame_sort_dts(list) x264_frame_sort(list, 1)
 #define x264_frame_sort_pts(list) x264_frame_sort(list, 0)

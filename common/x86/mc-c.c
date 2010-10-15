@@ -1,7 +1,7 @@
 /*****************************************************************************
- * mc-c.c: h264 encoder library (Motion Compensation)
+ * mc-c.c: x86 motion compensation
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -20,6 +20,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include <stdlib.h>
@@ -163,6 +166,7 @@ static void (* const x264_pixel_avg_wtab_##instr[6])( uint8_t *, int, uint8_t *,
 };
 
 /* w16 sse2 is faster than w12 mmx as long as the cacheline issue is resolved */
+#define x264_pixel_avg2_w12_cache64_ssse3 x264_pixel_avg2_w16_cache64_ssse3
 #define x264_pixel_avg2_w12_cache64_sse2 x264_pixel_avg2_w16_cache64_sse2
 #define x264_pixel_avg2_w12_sse3         x264_pixel_avg2_w16_sse3
 #define x264_pixel_avg2_w12_sse2         x264_pixel_avg2_w16_sse2
@@ -175,7 +179,7 @@ PIXEL_AVG_WTAB(cache64_mmxext, mmxext, cache64_mmxext, cache64_mmxext, cache64_m
 PIXEL_AVG_WTAB(sse2, mmxext, mmxext, sse2, sse2, sse2)
 PIXEL_AVG_WTAB(sse2_misalign, mmxext, mmxext, sse2, sse2, sse2_misalign)
 PIXEL_AVG_WTAB(cache64_sse2, mmxext, cache64_mmxext, cache64_sse2, cache64_sse2, cache64_sse2)
-PIXEL_AVG_WTAB(cache64_ssse3, mmxext, cache64_mmxext, cache64_sse2, cache64_ssse3, cache64_sse2)
+PIXEL_AVG_WTAB(cache64_ssse3, mmxext, cache64_mmxext, cache64_ssse3, cache64_ssse3, cache64_sse2)
 
 #define MC_COPY_WTAB(instr, name1, name2, name3)\
 static void (* const x264_mc_copy_wtab_##instr[5])( uint8_t *, int, uint8_t *, int, int ) =\
@@ -525,7 +529,8 @@ void x264_mc_init_mmx( int cpu, x264_mc_functions_t *pf )
         if( cpu&X264_CPU_SSE_MISALIGN )
         {
             pf->get_ref = get_ref_sse2_misalign;
-            pf->mc_chroma = x264_mc_chroma_sse2_misalign;
+            if( !(cpu&X264_CPU_STACK_MOD4) )
+                pf->mc_chroma = x264_mc_chroma_sse2_misalign;
         }
     }
 

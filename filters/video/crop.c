@@ -1,5 +1,5 @@
 /*****************************************************************************
- * crop.c: x264 crop video filter
+ * crop.c: crop video filter
  *****************************************************************************
  * Copyright (C) 2010 x264 project
  *
@@ -19,6 +19,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "video.h"
@@ -100,8 +103,12 @@ static int get_frame( hnd_t handle, cli_pic_t *output, int frame )
     output->img.height = h->dims[3];
     /* shift the plane pointers down 'top' rows and right 'left' columns. */
     for( int i = 0; i < output->img.planes; i++ )
-        output->img.plane[i] += (int)(output->img.stride[i] * h->dims[1] * h->csp->height[i]
-                                    + h->dims[0] * h->csp->width[i]);
+    {
+        intptr_t offset = output->img.stride[i] * h->dims[1] * h->csp->height[i];
+        offset += h->dims[0] * h->csp->width[i];
+        offset *= x264_cli_csp_depth_factor( output->img.csp );
+        output->img.plane[i] += offset;
+    }
     return 0;
 }
 

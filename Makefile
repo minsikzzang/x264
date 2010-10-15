@@ -18,11 +18,16 @@ SRCCLI = x264.c input/input.c input/timecode.c input/raw.c input/y4m.c \
          output/flv.c output/flv_bytestream.c filters/filters.c \
          filters/video/video.c filters/video/source.c filters/video/internal.c \
          filters/video/resize.c filters/video/cache.c filters/video/fix_vfr_pts.c \
-         filters/video/select_every.c filters/video/crop.c
+         filters/video/select_every.c filters/video/crop.c filters/video/depth.c
 
 SRCSO =
 
 CONFIG := $(shell cat config.h)
+
+# GPL-only files
+ifeq ($(GPL),yes)
+SRCCLI +=
+endif
 
 # Optional module sources
 ifneq ($(findstring HAVE_AVS, $(CONFIG)),)
@@ -223,20 +228,3 @@ etags: TAGS
 
 TAGS:
 	etags $(SRCS)
-
-dox:
-	doxygen Doxyfile
-
-ifeq (,$(VIDS))
-test:
-	@echo 'usage: make test VIDS="infile1 infile2 ..."'
-	@echo 'where infiles are anything that x264 understands,'
-	@echo 'i.e. YUV with resolution in the filename, y4m, or avisynth.'
-else
-test:
-	perl tools/regression-test.pl --version=head,current --options='$(OPT0)' --options='$(OPT1)' --options='$(OPT2)' $(VIDS:%=--input=%)
-endif
-
-testclean:
-	rm -f test/*.log test/*.264
-	$(foreach DIR, $(wildcard test/x264-r*/), cd $(DIR) ; make clean ; cd ../.. ;)

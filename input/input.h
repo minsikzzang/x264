@@ -1,7 +1,7 @@
 /*****************************************************************************
- * input.h: x264 file input modules
+ * input.h: file input
  *****************************************************************************
- * Copyright (C) 2003-2009 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -20,6 +20,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #ifndef X264_INPUT_H
@@ -33,6 +36,7 @@ typedef struct
     char *index_file;
     char *resolution;
     char *colorspace;
+    int bit_depth;
     char *timebase;
     int seek;
 } cli_input_opt_t;
@@ -100,8 +104,9 @@ extern cli_input_t input;
 #define X264_CSP_I444          (X264_CSP_MAX+1)  /* yuv 4:4:4 planar    */
 #define X264_CSP_BGR           (X264_CSP_MAX+2)  /* packed bgr 24bits   */
 #define X264_CSP_BGRA          (X264_CSP_MAX+3)  /* packed bgr 32bits   */
-#define X264_CSP_CLI_MAX       (X264_CSP_MAX+4)  /* end of list         */
-#define X264_CSP_OTHER          0x2000           /* non x264 colorspace */
+#define X264_CSP_RGB           (X264_CSP_MAX+4)  /* packed rgb 24bits   */
+#define X264_CSP_CLI_MAX       (X264_CSP_MAX+5)  /* end of list         */
+#define X264_CSP_OTHER          0x4000           /* non x264 colorspace */
 
 typedef struct
 {
@@ -116,6 +121,7 @@ typedef struct
 extern const x264_cli_csp_t x264_cli_csps[];
 
 int      x264_cli_csp_is_invalid( int csp );
+int      x264_cli_csp_depth_factor( int csp );
 int      x264_cli_pic_alloc( cli_pic_t *pic, int csp, int width, int height );
 void     x264_cli_pic_clean( cli_pic_t *pic );
 uint64_t x264_cli_pic_plane_size( int csp, int width, int height, int plane );

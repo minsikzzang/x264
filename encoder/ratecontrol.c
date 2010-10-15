@@ -1,7 +1,7 @@
 /*****************************************************************************
- * ratecontrol.c: h264 encoder library (Rate Control)
+ * ratecontrol.c: ratecontrol
  *****************************************************************************
- * Copyright (C) 2005-2008 x264 project
+ * Copyright (C) 2005-2010 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Michael Niedermayer <michaelni@gmx.at>
@@ -22,6 +22,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #define _ISOC99_SOURCE
@@ -104,6 +107,7 @@ struct x264_ratecontrol_t
     double last_rceq;
     double cplxr_sum;           /* sum of bits*qscale/rceq */
     double expected_bits_sum;   /* sum of qscale2bits after rceq, ratefactor, and overflow, only includes finished frames */
+    int64_t filler_bits_sum;    /* sum in bits of finished frames' filler data */
     double wanted_bits_window;  /* target bitrate * window */
     double cbr_decay;
     double short_term_cplxsum;
@@ -1599,6 +1603,7 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
     }
 
     *filler = update_vbv( h, bits );
+    rc->filler_bits_sum += *filler * 8;
 
     if( h->sps->vui.b_nal_hrd_parameters_present )
     {
@@ -2003,7 +2008,8 @@ static float rate_estimate_qscale( x264_t *h )
     int pict_type = h->sh.i_type;
     int64_t total_bits = 8*(h->stat.i_frame_size[SLICE_TYPE_I]
                           + h->stat.i_frame_size[SLICE_TYPE_P]
-                          + h->stat.i_frame_size[SLICE_TYPE_B]);
+                          + h->stat.i_frame_size[SLICE_TYPE_B])
+                       - rcc->filler_bits_sum;
 
     if( rcc->b_2pass )
     {
@@ -2364,6 +2370,7 @@ void x264_thread_sync_ratecontrol( x264_t *cur, x264_t *prev, x264_t *next )
          * to the context that's about to end (next) */
         COPY(cplxr_sum);
         COPY(expected_bits_sum);
+        COPY(filler_bits_sum);
         COPY(wanted_bits_window);
         COPY(bframe_bits);
         COPY(initial_cpb_removal_delay);
@@ -2518,6 +2525,7 @@ static int init_pass2( x264_t *h )
     const int filter_size = (int)(qblur*4) | 1;
     double expected_bits;
     double *qscale, *blurred_qscale;
+    double base_cplx = h->mb.i_mb_count * (h->param.i_bframe ? 120 : 80);
 
     /* find total/average complexity & const_bits */
     for( int i = 0; i < rcc->num_entries; i++ )
@@ -2601,6 +2609,10 @@ static int init_pass2( x264_t *h )
         rcc->last_non_b_pict_type = -1;
         rcc->last_accum_p_norm = 1;
         rcc->accum_p_norm = 0;
+
+        rcc->last_qscale_for[0] =
+        rcc->last_qscale_for[1] =
+        rcc->last_qscale_for[2] = pow( base_cplx, 1 - rcc->qcompress ) / rate_factor;
 
         /* find qscale */
         for( int i = 0; i < rcc->num_entries; i++ )

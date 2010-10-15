@@ -1,7 +1,7 @@
 /*****************************************************************************
- * common.c: h264 library
+ * common.c: misc common functions
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -19,6 +19,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "common.h"
@@ -29,6 +32,8 @@
 #if HAVE_MALLOC_H
 #include <malloc.h>
 #endif
+
+const int x264_bit_depth = BIT_DEPTH;
 
 static void x264_log_default( void *, int, const char *, va_list );
 
@@ -156,7 +161,6 @@ void x264_param_default( x264_param_t *param )
     param->b_annexb = 1;
     param->b_aud = 0;
     param->b_vfr_input = 1;
-    param->b_dts_compress = 0;
     param->i_nal_hrd = X264_NAL_HRD_NONE;
     param->b_tff = 1;
     param->b_pic_struct = 0;
@@ -603,7 +607,9 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->b_deterministic = atobool(value);
     OPT2("level", "level-idc")
     {
-        if( atof(value) < 6 )
+        if( !strcmp(value, "1b") )
+            p->i_level_idc = 9;
+        else if( atof(value) < 6 )
             p->i_level_idc = (int)(10*atof(value)+.5);
         else
             p->i_level_idc = atoi(value);
@@ -1042,19 +1048,20 @@ int x264_picture_alloc( x264_picture_t *pic, int i_csp, int i_width, int i_heigh
     x264_picture_init( pic );
     pic->img.i_csp = i_csp;
     pic->img.i_plane = csp == X264_CSP_NV12 ? 2 : 3;
-    pic->img.plane[0] = x264_malloc( 3 * i_width * i_height / 2 );
+    int depth_factor = i_csp & X264_CSP_HIGH_DEPTH ? 2 : 1;
+    pic->img.plane[0] = x264_malloc( 3 * i_width * i_height / 2 * depth_factor );
     if( !pic->img.plane[0] )
         return -1;
-    pic->img.plane[1] = pic->img.plane[0] + i_width * i_height;
+    pic->img.plane[1] = pic->img.plane[0] + i_width * i_height * depth_factor;
     if( csp != X264_CSP_NV12 )
-        pic->img.plane[2] = pic->img.plane[1] + i_width * i_height / 4;
-    pic->img.i_stride[0] = i_width;
+        pic->img.plane[2] = pic->img.plane[1] + i_width * i_height / 4 * depth_factor;
+    pic->img.i_stride[0] = i_width * depth_factor;
     if( csp == X264_CSP_NV12 )
-        pic->img.i_stride[1] = i_width;
+        pic->img.i_stride[1] = i_width * depth_factor;
     else
     {
-        pic->img.i_stride[1] = i_width / 2;
-        pic->img.i_stride[2] = i_width / 2;
+        pic->img.i_stride[1] = i_width / 2 * depth_factor;
+        pic->img.i_stride[2] = i_width / 2 * depth_factor;
     }
     return 0;
 }

@@ -1,7 +1,7 @@
 /*****************************************************************************
- * frame.c: h264 encoder library
+ * frame.c: frame handling
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -20,6 +20,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "common.h"
@@ -260,11 +263,26 @@ int x264_frame_copy_picture( x264_t *h, x264_frame_t *dst, x264_picture_t *src )
         return -1;
     }
 
+#if X264_HIGH_BIT_DEPTH
+    if( !(src->img.i_csp & X264_CSP_HIGH_DEPTH) )
+    {
+        x264_log( h, X264_LOG_ERROR, "This build of x264 requires high depth input. Rebuild to support 8-bit input.\n" );
+        return -1;
+    }
+#else
+    if( src->img.i_csp & X264_CSP_HIGH_DEPTH )
+    {
+        x264_log( h, X264_LOG_ERROR, "This build of x264 requires 8-bit input. Rebuild to support high depth input.\n" );
+        return -1;
+    }
+#endif
+
     dst->i_type     = src->i_type;
     dst->i_qpplus1  = src->i_qpplus1;
     dst->i_pts      = dst->i_reordered_pts = src->i_pts;
     dst->param      = src->param;
     dst->i_pic_struct = src->i_pic_struct;
+    dst->extra_sei  = src->extra_sei;
 
     uint8_t *pix[3];
     int stride[3];
@@ -291,15 +309,18 @@ int x264_frame_copy_picture( x264_t *h, x264_frame_t *dst, x264_picture_t *src )
 static void ALWAYS_INLINE pixel_memset( pixel *dst, pixel *src, int len, int size )
 {
     uint8_t *dstp = (uint8_t*)dst;
-    if(size == 1) {
+    if( size == 1 )
         memset(dst, *src, len);
-    } else if(size == 2) {
+    else if( size == 2 )
+    {
         int v = M16( src );
-        for(int i=0; i<len; i++)
+        for( int i = 0; i < len; i++ )
             M16( dstp+i*2 ) = v;
-    } else if(size == 4) {
+    }
+    else if( size == 4 )
+    {
         int v = M32( src );
-        for(int i=0; i<len; i++)
+        for( int i = 0; i < len; i++ )
             M32( dstp+i*4 ) = v;
     }
 }

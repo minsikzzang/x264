@@ -1,7 +1,7 @@
 ;*****************************************************************************
-;* predict-a.asm: h264 encoder library
+;* predict-a.asm: x86 intra prediction
 ;*****************************************************************************
-;* Copyright (C) 2005-2008 x264 project
+;* Copyright (C) 2005-2010 x264 project
 ;*
 ;* Authors: Loren Merritt <lorenm@u.washington.edu>
 ;*          Holger Lubitz <holger@lubitz.org>
@@ -20,6 +20,9 @@
 ;* You should have received a copy of the GNU General Public License
 ;* along with this program; if not, write to the Free Software
 ;* Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+;*
+;* This program is also available under a commercial proprietary license.
+;* For more information, contact us at licensing@x264.com.
 ;*****************************************************************************
 
 %include "x86inc.asm"
@@ -440,6 +443,7 @@ cglobal predict_8x8_v_mmxext, 2,2
 INIT_MMX
 cglobal predict_8x8_h_mmxext, 2,2
     movu   m3, [r1+7]
+    add    r0, FDEC_STRIDE*4
     mova   m7, m3
     punpckhbw m3, m3
     punpcklbw m7, m7
@@ -453,7 +457,7 @@ cglobal predict_8x8_h_mmxext, 2,2
     pshufw m7, m7, 0x00
 %assign n 0
 %rep 8
-    mova [r0+n*FDEC_STRIDE], m %+ n
+    mova [r0+(n-4)*FDEC_STRIDE], m %+ n
 %assign n n+1
 %endrep
     RET
@@ -985,7 +989,8 @@ cglobal predict_8x8c_h_%1, 1,1
 %ifidn %1, ssse3
     mova   m1, [pb_3]
 %endif
-%assign n 0
+    add    r0, FDEC_STRIDE*4
+%assign n -4
 %rep 8
     SPLATB m0, r0+FDEC_STRIDE*n-1, m1
     mova [r0+FDEC_STRIDE*n], m0

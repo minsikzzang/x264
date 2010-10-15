@@ -1,5 +1,5 @@
 /*****************************************************************************
- * filters.c: x264 filter common
+ * filters.c: common filter functions
  *****************************************************************************
  * Copyright (C) 2010 x264 project
  *
@@ -19,6 +19,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "filters.h"
@@ -65,7 +68,10 @@ char **x264_split_string( char *string, char *sep, uint32_t limit )
             esc = NULL;
         }
         else
-            assert( ( split[i++] = strdup( tok ) ) );
+        {
+            split[i++] = strdup( tok );
+            assert( split[i-1] );
+        }
         tok = nexttok;
     } while ( tok );
     free( str );

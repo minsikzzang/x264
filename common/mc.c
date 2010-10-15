@@ -1,7 +1,7 @@
 /*****************************************************************************
- * mc.c: h264 encoder library (Motion Compensation)
+ * mc.c: motion compensation
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -19,6 +19,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "common.h"
@@ -299,12 +302,7 @@ void x264_plane_copy_c( pixel *dst, int i_dst,
 {
     while( h-- )
     {
-#if X264_HIGH_BIT_DEPTH
-        for( int i = 0; i < w; i++ )
-            dst[i] = src[i] << (BIT_DEPTH-8);
-#else
-        memcpy( dst, src, w );
-#endif
+        memcpy( dst, src, w * sizeof(pixel) );
         dst += i_dst;
         src += i_src;
     }
@@ -317,8 +315,8 @@ void x264_plane_copy_interleave_c( pixel *dst, int i_dst,
     for( int y=0; y<h; y++, dst+=i_dst, srcu+=i_srcu, srcv+=i_srcv )
         for( int x=0; x<w; x++ )
         {
-            dst[2*x]   = srcu[x] << (BIT_DEPTH-8);
-            dst[2*x+1] = srcv[x] << (BIT_DEPTH-8);
+            dst[2*x]   = ((pixel*)srcu)[x];
+            dst[2*x+1] = ((pixel*)srcv)[x];
         }
 }
 

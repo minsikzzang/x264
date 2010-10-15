@@ -1,7 +1,9 @@
 /*****************************************************************************
- * internal.c: x264 video filter internal utilities
+ * internal.c: video filter utilities
  *****************************************************************************
- * Copyright (C) 2010 Steven Walters <kemuri9@gmail.com>
+ * Copyright (C) 2010 x264 project
+ *
+ * Authors: Steven Walters <kemuri9@gmail.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -16,6 +18,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #include "internal.h"
@@ -46,6 +51,7 @@ int x264_cli_pic_copy( cli_pic_t *out, cli_pic_t *in )
     {
         int height = in->img.height * x264_cli_csps[csp].height[i];
         int width =  in->img.width  * x264_cli_csps[csp].width[i];
+        width *= x264_cli_csp_depth_factor( in->img.csp );
         x264_cli_plane_copy( out->img.plane[i], out->img.stride[i], in->img.plane[i],
                              in->img.stride[i], width, height );
     }

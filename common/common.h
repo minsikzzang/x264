@@ -1,7 +1,7 @@
 /*****************************************************************************
- * common.h: h264 encoder
+ * common.h: misc common functions
  *****************************************************************************
- * Copyright (C) 2003-2008 x264 project
+ * Copyright (C) 2003-2010 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -19,6 +19,9 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02111, USA.
+ *
+ * This program is also available under a commercial proprietary license.
+ * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
 #ifndef X264_COMMON_H
@@ -440,9 +443,6 @@ struct x264_t
     x264_pps_t      *pps;
     int             i_idr_pic_id;
 
-    /* Timebase multiplier for DTS compression */
-    int             i_dts_compress_multiplier;
-
     /* quantization matrix for decoding, [cqm][qp%6][coef] */
     int             (*dequant4_mf[4])[16];   /* [4][6][16] */
     int             (*dequant8_mf[2])[64];   /* [2][6][64] */
@@ -496,7 +496,7 @@ struct x264_t
         int i_delay;    /* Number of frames buffered for B reordering */
         int     i_bframe_delay;
         int64_t i_bframe_delay_time;
-        int64_t i_init_delta;
+        int64_t i_first_pts;
         int64_t i_prev_reordered_pts[2];
         int64_t i_largest_pts;
         int64_t i_second_largest_pts;

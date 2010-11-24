@@ -36,7 +36,7 @@
 #include "mc.h"
 #include "ppccommon.h"
 
-#if !X264_HIGH_BIT_DEPTH
+#if !HIGH_BIT_DEPTH
 typedef void (*pf_mc_t)( uint8_t *src, int i_src,
                          uint8_t *dst, int i_dst, int i_height );
 
@@ -460,8 +460,8 @@ static void mc_chroma_altivec_8xh( uint8_t *dstu, uint8_t *dstv, int i_dst_strid
         dstv_16h = vec_sr( dstv_16h, shiftv );
         dstv_16l = vec_sr( dstv_16l, shiftv );
 
-        dstuv = vec_perm( dstv_16h, dstv_16l, perm0v );
-        dstvv = vec_perm( dstv_16h, dstv_16l, perm1v );
+        dstuv = (vec_u8_t)vec_perm( dstv_16h, dstv_16l, perm0v );
+        dstvv = (vec_u8_t)vec_perm( dstv_16h, dstv_16l, perm1v );
 
         VEC_STORE8( dstuv, dstu );
         VEC_STORE8( dstvv, dstv );
@@ -498,8 +498,8 @@ static void mc_chroma_altivec_8xh( uint8_t *dstu, uint8_t *dstv, int i_dst_strid
         dstv_16h = vec_sr( dstv_16h, shiftv );
         dstv_16l = vec_sr( dstv_16l, shiftv );
 
-        dstuv = vec_perm( dstv_16h, dstv_16l, perm0v );
-        dstvv = vec_perm( dstv_16h, dstv_16l, perm1v );
+        dstuv = (vec_u8_t)vec_perm( dstv_16h, dstv_16l, perm0v );
+        dstvv = (vec_u8_t)vec_perm( dstv_16h, dstv_16l, perm1v );
 
         VEC_STORE8( dstuv, dstu );
         VEC_STORE8( dstvv, dstv );
@@ -856,11 +856,11 @@ static void frame_init_lowres_core_altivec( uint8_t *src0, uint8_t *dst0, uint8_
         dstc += dst_stride;
     }
 }
-#endif // !X264_HIGH_BIT_DEPTH
+#endif // !HIGH_BIT_DEPTH
 
 void x264_mc_altivec_init( x264_mc_functions_t *pf )
 {
-#if !X264_HIGH_BIT_DEPTH
+#if !HIGH_BIT_DEPTH
     pf->mc_luma   = mc_luma_altivec;
     pf->get_ref   = get_ref_altivec;
     pf->mc_chroma = mc_chroma_altivec;
@@ -870,5 +870,5 @@ void x264_mc_altivec_init( x264_mc_functions_t *pf )
 
     pf->hpel_filter = x264_hpel_filter_altivec;
     pf->frame_init_lowres_core = frame_init_lowres_core_altivec;
-#endif // !X264_HIGH_BIT_DEPTH
+#endif // !HIGH_BIT_DEPTH
 }

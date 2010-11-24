@@ -78,7 +78,7 @@ x264_frame_t *x264_frame_new( x264_t *h, int b_fdec )
 
     frame->i_poc = -1;
     frame->i_type = X264_TYPE_AUTO;
-    frame->i_qpplus1 = 0;
+    frame->i_qpplus1 = X264_QP_AUTO;
     frame->i_pts = -1;
     frame->i_frame = -1;
     frame->i_frame_num = -1;
@@ -263,7 +263,7 @@ int x264_frame_copy_picture( x264_t *h, x264_frame_t *dst, x264_picture_t *src )
         return -1;
     }
 
-#if X264_HIGH_BIT_DEPTH
+#if HIGH_BIT_DEPTH
     if( !(src->img.i_csp & X264_CSP_HIGH_DEPTH) )
     {
         x264_log( h, X264_LOG_ERROR, "This build of x264 requires high depth input. Rebuild to support 8-bit input.\n" );

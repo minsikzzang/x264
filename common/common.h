@@ -110,10 +110,11 @@ typedef union { x264_uint128_t i; uint64_t a[2]; uint32_t b[4]; uint16_t c[8]; u
 #define CP64(dst,src) M64(dst) = M64(src)
 #define CP128(dst,src) M128(dst) = M128(src)
 
-#if X264_HIGH_BIT_DEPTH
+#if HIGH_BIT_DEPTH
     typedef uint16_t pixel;
     typedef uint64_t pixel4;
     typedef int32_t  dctcoef;
+    typedef uint32_t udctcoef;
 
 #   define PIXEL_SPLAT_X4(x) ((x)*0x0001000100010001ULL)
 #   define MPIXEL_X4(src) M64(src)
@@ -121,6 +122,7 @@ typedef union { x264_uint128_t i; uint64_t a[2]; uint32_t b[4]; uint16_t c[8]; u
     typedef uint8_t  pixel;
     typedef uint32_t pixel4;
     typedef int16_t  dctcoef;
+    typedef uint16_t udctcoef;
 
 #   define PIXEL_SPLAT_X4(x) ((x)*0x01010101U)
 #   define MPIXEL_X4(src) M32(src)
@@ -200,7 +202,7 @@ void x264_log( x264_t *h, int i_level, const char *psz_fmt, ... );
 
 void x264_reduce_fraction( uint32_t *n, uint32_t *d );
 void x264_reduce_fraction64( uint64_t *n, uint64_t *d );
-void x264_init_vlc_tables();
+void x264_init_vlc_tables( void );
 
 static ALWAYS_INLINE pixel x264_clip_pixel( int x )
 {
@@ -433,6 +435,8 @@ struct x264_t
     int             i_coded_fields_lookahead; /* Use separate counters for lookahead */
     int             i_cpb_delay_lookahead;
 
+    int             i_cpb_delay_pir_offset;
+
     int             b_queued_intra_refresh;
     int64_t         i_last_idr_pts;
 
@@ -450,10 +454,10 @@ struct x264_t
     int             (*unquant4_mf[4])[16];   /* [4][52][16] */
     int             (*unquant8_mf[2])[64];   /* [2][52][64] */
     /* quantization matrix for deadzone */
-    uint16_t        (*quant4_mf[4])[16];     /* [4][52][16] */
-    uint16_t        (*quant8_mf[2])[64];     /* [2][52][64] */
-    uint16_t        (*quant4_bias[4])[16];   /* [4][52][16] */
-    uint16_t        (*quant8_bias[2])[64];   /* [2][52][64] */
+    udctcoef        (*quant4_mf[4])[16];     /* [4][52][16] */
+    udctcoef        (*quant8_mf[2])[64];     /* [2][52][64] */
+    udctcoef        (*quant4_bias[4])[16];   /* [4][52][16] */
+    udctcoef        (*quant8_bias[2])[64];   /* [2][52][64] */
 
     /* mv/ref cost arrays.  Indexed by lambda instead of
      * qp because, due to rounding, some quantizers share
@@ -780,19 +784,20 @@ struct x264_t
         /* Cumulated stats */
 
         /* per slice info */
-        int     i_frame_count[5];
-        int64_t i_frame_size[5];
-        double  f_frame_qp[5];
+        int     i_frame_count[3];
+        int64_t i_frame_size[3];
+        double  f_frame_qp[3];
         int     i_consecutive_bframes[X264_BFRAME_MAX+1];
         /* */
-        int64_t i_ssd_global[5];
-        double  f_psnr_average[5];
-        double  f_psnr_mean_y[5];
-        double  f_psnr_mean_u[5];
-        double  f_psnr_mean_v[5];
-        double  f_ssim_mean_y[5];
+        double  f_ssd_global[3];
+        double  f_psnr_average[3];
+        double  f_psnr_mean_y[3];
+        double  f_psnr_mean_u[3];
+        double  f_psnr_mean_v[3];
+        double  f_ssim_mean_y[3];
+        double  f_frame_duration[3];
         /* */
-        int64_t i_mb_count[5][19];
+        int64_t i_mb_count[3][19];
         int64_t i_mb_partition[2][17];
         int64_t i_mb_count_8x8dct[2];
         int64_t i_mb_count_ref[2][2][X264_REF_MAX*2];
@@ -802,12 +807,12 @@ struct x264_t
         int     i_direct_score[2];
         int     i_direct_frames[2];
         /* num p-frames weighted */
-        int     i_wpred[3];
+        int     i_wpred[2];
 
     } stat;
 
     ALIGNED_16( uint32_t nr_residual_sum[2][64] );
-    ALIGNED_16( uint16_t nr_offset[2][64] );
+    ALIGNED_16( udctcoef nr_offset[2][64] );
     uint32_t        nr_count[2];
 
     /* Buffers that are allocated per-thread even in sliced threads. */

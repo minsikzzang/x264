@@ -192,10 +192,10 @@ void x264_sps_init( x264_sps_t *sps, int i_id, x264_param_t *param )
     sps->b_mb_adaptive_frame_field = param->b_interlaced;
     sps->b_direct8x8_inference = 1;
 
-    sps->crop.i_left   = 0;
-    sps->crop.i_top    = 0;
-    sps->crop.i_right  = sps->i_mb_width*16 - param->i_width;
-    sps->crop.i_bottom = (sps->i_mb_height*16 - param->i_height) >> !sps->b_frame_mbs_only;
+    sps->crop.i_left   = param->crop_rect.i_left;
+    sps->crop.i_top    = param->crop_rect.i_top;
+    sps->crop.i_right  = param->crop_rect.i_right + sps->i_mb_width*16 - param->i_width;
+    sps->crop.i_bottom = (param->crop_rect.i_bottom + sps->i_mb_height*16 - param->i_height) >> !sps->b_frame_mbs_only;
     sps->b_crop = sps->crop.i_left  || sps->crop.i_top ||
                   sps->crop.i_right || sps->crop.i_bottom;
 
@@ -571,8 +571,8 @@ int x264_sei_version_write( x264_t *h, bs_t *s )
 
     memcpy( payload, uuid, 16 );
     sprintf( payload+16, "x264 - core %d%s - H.264/MPEG-4 AVC codec - "
-             "Copyleft 2003-2010 - http://www.videolan.org/x264.html - options: %s",
-             X264_BUILD, X264_VERSION, opts );
+             "Copy%s 2003-2010 - http://www.videolan.org/x264.html - options: %s",
+             X264_BUILD, X264_VERSION, HAVE_GPL?"left":"right", opts );
     length = strlen(payload)+1;
 
     x264_sei_write( s, (uint8_t *)payload, length, SEI_USER_DATA_UNREGISTERED );
@@ -618,7 +618,7 @@ void x264_sei_pic_timing_write( x264_t *h, bs_t *s )
 
     if( sps->vui.b_nal_hrd_parameters_present || sps->vui.b_vcl_hrd_parameters_present )
     {
-        bs_write( &q, sps->vui.hrd.i_cpb_removal_delay_length, h->fenc->i_cpb_delay );
+        bs_write( &q, sps->vui.hrd.i_cpb_removal_delay_length, h->fenc->i_cpb_delay - h->i_cpb_delay_pir_offset );
         bs_write( &q, sps->vui.hrd.i_dpb_output_delay_length, h->fenc->i_dpb_output_delay );
     }
 

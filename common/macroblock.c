@@ -238,7 +238,7 @@ int x264_macroblock_cache_allocate( x264_t *h )
     {
         int i_refs = X264_MIN(X264_REF_MAX, (i ? 1 + !!h->param.i_bframe_pyramid : h->param.i_frame_reference) ) << h->param.b_interlaced;
         if( h->param.analyse.i_weighted_pred == X264_WEIGHTP_SMART )
-            i_refs = X264_MIN(X264_REF_MAX, i_refs + 2); //smart weights add two duplicate frames
+            i_refs = X264_MIN(X264_REF_MAX, i_refs + 1 + (BIT_DEPTH == 8)); //smart weights add two duplicate frames, one in >8-bit
         else if( h->param.analyse.i_weighted_pred == X264_WEIGHTP_BLIND )
             i_refs = X264_MIN(X264_REF_MAX, i_refs + 1); //blind weights add one duplicate frame
 
@@ -333,7 +333,7 @@ int x264_macroblock_thread_allocate( x264_t *h, int b_lookahead )
     int scratch_size = 0;
     if( !b_lookahead )
     {
-        int buf_hpel = (h->thread[0]->fdec->i_width[0]+48) * sizeof(dctcoef);
+        int buf_hpel = (h->thread[0]->fdec->i_width[0]+48) * sizeof(int16_t);
         int buf_ssim = h->param.analyse.b_ssim * 8 * (h->param.i_width/4+3) * sizeof(int);
         int me_range = X264_MIN(h->param.analyse.i_me_range, h->param.analyse.i_mv_range);
         int buf_tesa = (h->param.analyse.i_me_method >= X264_ME_ESA) *
@@ -674,6 +674,17 @@ void x264_macroblock_cache_load( x264_t *h, int mb_x, int mb_y )
         /* shift because x264_scan8[16] is misaligned */
         M32( &h->mb.cache.non_zero_count[x264_scan8[16+0] - 9] ) = M16( &nnz[top][18] ) << 8;
         M32( &h->mb.cache.non_zero_count[x264_scan8[16+4] - 9] ) = M16( &nnz[top][22] ) << 8;
+
+        /* Finish the prefetching */
+        for( int l = 0; l < lists; l++ )
+        {
+            x264_prefetch( &h->mb.mv[l][top_4x4-1] );
+            /* Top right being not in the same cacheline as top left will happen
+             * once every 4 MBs, so one extra prefetch is worthwhile */
+            x264_prefetch( &h->mb.mv[l][top_4x4+4] );
+            x264_prefetch( &h->mb.ref[l][top_8x8-1] );
+            x264_prefetch( &h->mb.mvd[l][top] );
+        }
     }
     else
     {
@@ -709,17 +720,6 @@ void x264_macroblock_cache_load( x264_t *h, int mb_x, int mb_y )
 
         h->mb.cache.non_zero_count[x264_scan8[16+4+0] - 1] = nnz[left][16+4+1];
         h->mb.cache.non_zero_count[x264_scan8[16+4+2] - 1] = nnz[left][16+4+3];
-
-        /* Finish the prefetching */
-        for( int l = 0; l < lists; l++ )
-        {
-            x264_prefetch( &h->mb.mv[l][top_4x4-1] );
-            /* Top right being not in the same cacheline as top left will happen
-             * once every 4 MBs, so one extra prefetch is worthwhile */
-            x264_prefetch( &h->mb.mv[l][top_4x4+4] );
-            x264_prefetch( &h->mb.ref[l][top_8x8-1] );
-            x264_prefetch( &h->mb.mvd[l][top] );
-        }
     }
     else
     {

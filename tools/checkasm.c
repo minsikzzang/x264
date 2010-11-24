@@ -452,17 +452,17 @@ static int check_pixel( int cpu_ref, int cpu_new )
     {
         used_asm = 1;
         set_func_name( "ssd_nv12" );
-        uint64_t res_c = pixel_c.ssd_nv12_core(   pbuf1, 368, pbuf2, 368, 360, 8 );
-        uint64_t res_a = pixel_asm.ssd_nv12_core( pbuf1, 368, pbuf2, 368, 360, 8 );
-        if( res_c != res_a )
+        uint64_t res_u_c, res_v_c, res_u_a, res_v_a;
+        pixel_c.ssd_nv12_core(   pbuf1, 368, pbuf2, 368, 360, 8, &res_u_c, &res_v_c );
+        pixel_asm.ssd_nv12_core( pbuf1, 368, pbuf2, 368, 360, 8, &res_u_a, &res_v_a );
+        if( res_u_c != res_u_a || res_v_c != res_v_a )
         {
             ok = 0;
-            fprintf( stderr, "ssd_nv12: %u,%u != %u,%u\n",
-                     (uint32_t)res_c, (uint32_t)(res_c>>32),
-                     (uint32_t)res_a, (uint32_t)(res_a>>32) );
+            fprintf( stderr, "ssd_nv12: %"PRIu64",%"PRIu64" != %"PRIu64",%"PRIu64"\n",
+                     res_u_c, res_v_c, res_u_a, res_v_a );
         }
-        call_c( pixel_c.ssd_nv12_core,   pbuf1, 368, pbuf2, 368, 360, 8 );
-        call_a( pixel_asm.ssd_nv12_core, pbuf1, 368, pbuf2, 368, 360, 8 );
+        call_c( pixel_c.ssd_nv12_core,   pbuf1, 368, pbuf2, 368, 360, 8, &res_u_c, &res_v_c );
+        call_a( pixel_asm.ssd_nv12_core, pbuf1, 368, pbuf2, 368, 360, 8, &res_u_a, &res_v_a );
     }
     report( "ssd_nv12 :" );
 
@@ -536,7 +536,7 @@ static int check_dct( int cpu_ref, int cpu_new )
     ALIGNED_16( dctcoef dct2[16][16] );
     ALIGNED_16( dctcoef dct4[16][16] );
     ALIGNED_16( dctcoef dct8[4][64] );
-    ALIGNED_8( dctcoef dctdc[2][4] );
+    ALIGNED_16( dctcoef dctdc[2][4] );
     x264_t h_buf;
     x264_t *h = &h_buf;
 
@@ -821,17 +821,18 @@ static int check_mc( int cpu_ref, int cpu_new )
         { \
             pixel *ref = dst2; \
             int ref_stride = 32; \
+            int w_checked = ( ( sizeof(pixel) == 2 && (w == 12 || w == 20)) ? w-2 : w ); \
             const x264_weight_t *weight = weight_none; \
-            set_func_name( "get_ref_%dx%d", w, h ); \
+            set_func_name( "get_ref_%dx%d", w_checked, h ); \
             used_asm = 1; \
             for( int i = 0; i < 1024; i++ ) \
                 pbuf3[i] = pbuf4[i] = 0xCD; \
             call_c( mc_c.mc_luma, dst1, 32, src2, 64, dx, dy, w, h, weight ); \
             ref = (pixel*)call_a( mc_a.get_ref, ref, &ref_stride, src2, 64, dx, dy, w, h, weight ); \
             for( int i = 0; i < h; i++ ) \
-                if( memcmp( dst1+i*32, ref+i*ref_stride, w * sizeof(pixel) ) ) \
+                if( memcmp( dst1+i*32, ref+i*ref_stride, w_checked * sizeof(pixel) ) ) \
                 { \
-                    fprintf( stderr, "get_ref[mv(%d,%d) %2dx%-2d]     [FAILED]\n", dx, dy, w, h ); \
+                    fprintf( stderr, "get_ref[mv(%d,%d) %2dx%-2d]     [FAILED]\n", dx, dy, w_checked, h ); \
                     ok = 0; \
                     break; \
                 } \
@@ -1176,14 +1177,14 @@ static int check_mc( int cpu_ref, int cpu_new )
         int stride = 80;\
         set_func_name( #name );\
         used_asm = 1;\
-        memcpy( pbuf3, pbuf1, size*2*stride * sizeof(pixel) );\
-        memcpy( pbuf4, pbuf1, size*2*stride * sizeof(pixel) );\
-        uint16_t *sum = (uint16_t*)pbuf3;\
+        memcpy( buf3, buf1, size*2*stride );\
+        memcpy( buf4, buf1, size*2*stride );\
+        uint16_t *sum = (uint16_t*)buf3;\
         call_c1( mc_c.name, __VA_ARGS__ );\
-        sum = (uint16_t*)pbuf4;\
+        sum = (uint16_t*)buf4;\
         call_a1( mc_a.name, __VA_ARGS__ );\
-        if( memcmp( pbuf3, pbuf4, (stride-8)*2 * sizeof(pixel) )\
-            || (size>9 && memcmp( pbuf3+18*stride, pbuf4+18*stride, (stride-8)*2 * sizeof(pixel) )))\
+        if( memcmp( buf3, buf4, (stride-8)*2 ) \
+            || (size>9 && memcmp( buf3+18*stride, buf4+18*stride, (stride-8)*2 )))\
             ok = 0;\
         call_c2( mc_c.name, __VA_ARGS__ );\
         call_a2( mc_a.name, __VA_ARGS__ );\
@@ -1531,12 +1532,12 @@ static int check_quant( int cpu_ref, int cpu_new )
             memcpy( dct1, buf1, size*sizeof(dctcoef) );
             memcpy( dct2, buf1, size*sizeof(dctcoef) );
             memcpy( buf3+256, buf3, 256 );
-            call_c1( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
-            call_a1( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
+            call_c1( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (udctcoef*)buf2, size );
+            call_a1( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (udctcoef*)buf2, size );
             if( memcmp( dct1, dct2, size*sizeof(dctcoef) ) || memcmp( buf3+4, buf3+256+4, (size-1)*sizeof(uint32_t) ) )
                 ok = 0;
-            call_c2( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (uint16_t*)buf2, size );
-            call_a2( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (uint16_t*)buf2, size );
+            call_c2( qf_c.denoise_dct, dct1, (uint32_t*)buf3, (udctcoef*)buf2, size );
+            call_a2( qf_a.denoise_dct, dct2, (uint32_t*)(buf3+256), (udctcoef*)buf2, size );
         }
     }
     report( "denoise dct :" );
@@ -1548,8 +1549,17 @@ static int check_quant( int cpu_ref, int cpu_new )
         used_asm = 1; \
         for( int i = 0; i < 100; i++ ) \
         { \
+            static const int distrib[16] = {1,1,1,1,1,1,1,1,1,1,1,1,2,3,4};\
+            static const int zerorate_lut[4] = {3,7,15,31};\
+            int zero_rate = zerorate_lut[i&3];\
             for( int idx = 0; idx < w*w; idx++ ) \
-                dct1[idx] = !(rand()&3) + (!(rand()&15))*(rand()&3); \
+            { \
+                int sign = (rand()&1) ? -1 : 1; \
+                int abs_level = distrib[rand()&15]; \
+                if( abs_level == 4 ) abs_level = rand()&0x3fff; \
+                int zero = !(rand()&zero_rate); \
+                dct1[idx] = zero * abs_level * sign; \
+            } \
             if( ac ) \
                 dct1[0] = 0; \
             int result_c = call_c( qf_c.decname, dct1 ); \

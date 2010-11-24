@@ -53,8 +53,8 @@ typedef struct
     int s_count;
     float blurred_complexity;
     char direct_mode;
-    int16_t weight[2];
-    int16_t i_weight_denom;
+    int16_t weight[3][2];
+    int16_t i_weight_denom[2];
     int refcount[16];
     int refs;
     int i_duration;
@@ -90,7 +90,6 @@ struct x264_ratecontrol_t
     float qpa_rc;               /* average of macroblocks' qp before aq */
     float qpa_aq;               /* average of macroblocks' qp after aq */
     float qp_novbv;             /* QP for the current frame if 1-pass VBV was disabled. */
-    int qp_force;
 
     /* VBV stuff */
     double buffer_size;
@@ -228,11 +227,11 @@ static ALWAYS_INLINE uint32_t ac_energy_plane( x264_t *h, int mb_x, int mb_y, x2
     {
         ALIGNED_ARRAY_16( pixel, pix,[FENC_STRIDE*8] );
         h->mc.load_deinterleave_8x8x2_fenc( pix, frame->plane[1] + offset, stride );
-        return ac_energy_var( h->pixf.var[PIXEL_8x8]( pix, FENC_STRIDE ), 6, frame, i )
-             + ac_energy_var( h->pixf.var[PIXEL_8x8]( pix+FENC_STRIDE/2, FENC_STRIDE ), 6, frame, i );
+        return ac_energy_var( h->pixf.var[PIXEL_8x8]( pix, FENC_STRIDE ), 6, frame, 1 )
+             + ac_energy_var( h->pixf.var[PIXEL_8x8]( pix+FENC_STRIDE/2, FENC_STRIDE ), 6, frame, 2 );
     }
     else
-        return ac_energy_var( h->pixf.var[PIXEL_16x16]( frame->plane[0] + offset, stride ), 8, frame, i );
+        return ac_energy_var( h->pixf.var[PIXEL_16x16]( frame->plane[0] + offset, stride ), 8, frame, 0 );
 }
 
 // Find the total AC energy of the block in all planes.
@@ -456,7 +455,7 @@ void x264_ratecontrol_init_reconfigurable( x264_t *h, int b_init )
         double base_cplx = h->mb.i_mb_count * (h->param.i_bframe ? 120 : 80);
         double mbtree_offset = h->param.rc.b_mb_tree ? (1.0-h->param.rc.f_qcompress)*13.5 : 0;
         rc->rate_factor_constant = pow( base_cplx, 1 - rc->qcompress )
-                                 / qp2qscale( h->param.rc.f_rf_constant + mbtree_offset );
+                                 / qp2qscale( h->param.rc.f_rf_constant + mbtree_offset + QP_BD_OFFSET );
     }
 
     if( h->param.rc.i_vbv_max_bitrate > 0 && h->param.rc.i_vbv_buffer_size > 0 )
@@ -621,7 +620,7 @@ int x264_ratecontrol_new( x264_t *h )
     if( rc->b_abr )
     {
         /* FIXME ABR_INIT_QP is actually used only in CRF */
-#define ABR_INIT_QP ( h->param.rc.i_rc_method == X264_RC_CRF ? h->param.rc.f_rf_constant : 24 )
+#define ABR_INIT_QP (( h->param.rc.i_rc_method == X264_RC_CRF ? h->param.rc.f_rf_constant : 24 ) + QP_BD_OFFSET)
         rc->accum_p_norm = .01;
         rc->accum_p_qp = ABR_INIT_QP * rc->accum_p_norm;
         /* estimated ratio that produces a reasonable QP for the first I-frame */
@@ -732,6 +731,7 @@ int x264_ratecontrol_new( x264_t *h )
                 return -1;
             }
 
+            CMP_OPT_FIRST_PASS( "bitdepth", BIT_DEPTH );
             CMP_OPT_FIRST_PASS( "weightp", X264_MAX( 0, h->param.analyse.i_weighted_pred ) );
             CMP_OPT_FIRST_PASS( "bframes", h->param.i_bframe );
             CMP_OPT_FIRST_PASS( "b_pyramid", h->param.i_bframe_pyramid );
@@ -854,11 +854,19 @@ int x264_ratecontrol_new( x264_t *h )
             rce->refs = ref;
 
             /* find weights */
-            rce->i_weight_denom = -1;
+            rce->i_weight_denom[0] = rce->i_weight_denom[1] = -1;
             char *w = strchr( p, 'w' );
             if( w )
-                if( sscanf( w, "w:%hd,%hd,%hd", &rce->i_weight_denom, &rce->weight[0], &rce->weight[1] ) != 3 )
-                    rce->i_weight_denom = -1;
+            {
+                int count = sscanf( w, "w:%hd,%hd,%hd,%hd,%hd,%hd,%hd,%hd",
+                                    &rce->i_weight_denom[0], &rce->weight[0][0], &rce->weight[0][1],
+                                    &rce->i_weight_denom[1], &rce->weight[1][0], &rce->weight[1][1],
+                                    &rce->weight[2][0], &rce->weight[2][1] );
+                if( count == 3 )
+                    rce->i_weight_denom[1] = -1;
+                else if ( count != 8 )
+                    rce->i_weight_denom[0] = rce->i_weight_denom[1] = -1;
+            }
 
             if( pict_type != 'b' )
                 rce->kept_as_ref = 1;
@@ -1095,7 +1103,7 @@ void x264_ratecontrol_summary( x264_t *h )
         double mbtree_offset = h->param.rc.b_mb_tree ? (1.0-h->param.rc.f_qcompress)*13.5 : 0;
         x264_log( h, X264_LOG_INFO, "final ratefactor: %.2f\n",
                   qscale2qp( pow( base_cplx, 1 - rc->qcompress )
-                             * rc->cplxr_sum / rc->wanted_bits_window ) - mbtree_offset );
+                             * rc->cplxr_sum / rc->wanted_bits_window ) - mbtree_offset - QP_BD_OFFSET );
     }
 }
 
@@ -1173,8 +1181,6 @@ void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
         x264_encoder_reconfig( h, zone->param );
     rc->prev_zone = zone;
 
-    rc->qp_force = i_force_qp;
-
     if( h->param.rc.b_stat_read )
     {
         int frame = h->fenc->i_frame;
@@ -1230,7 +1236,7 @@ void x264_ratecontrol_start( x264_t *h, int i_force_qp, int overhead )
     if( h->sh.i_type != SLICE_TYPE_B )
         rc->bframes = h->fenc->i_bframes;
 
-    if( i_force_qp )
+    if( i_force_qp != X264_QP_AUTO )
     {
         q = i_force_qp - 1;
     }
@@ -1451,7 +1457,7 @@ int x264_ratecontrol_slice_type( x264_t *h, int frame_num )
             /* We could try to initialize everything required for ABR and
              * adaptive B-frames, but that would be complicated.
              * So just calculate the average QP used so far. */
-            h->param.rc.i_qp_constant = (h->stat.i_frame_count[SLICE_TYPE_P] == 0) ? 24
+            h->param.rc.i_qp_constant = (h->stat.i_frame_count[SLICE_TYPE_P] == 0) ? 24 + QP_BD_OFFSET
                                       : 1 + h->stat.f_frame_qp[SLICE_TYPE_P] / h->stat.i_frame_count[SLICE_TYPE_P];
             rc->qp_constant[SLICE_TYPE_P] = x264_clip3( h->param.rc.i_qp_constant, 0, QP_MAX );
             rc->qp_constant[SLICE_TYPE_I] = x264_clip3( (int)( qscale2qp( qp2qscale( h->param.rc.i_qp_constant ) / fabs( h->param.rc.f_ip_factor )) + 0.5 ), 0, QP_MAX );
@@ -1487,8 +1493,15 @@ void x264_ratecontrol_set_weights( x264_t *h, x264_frame_t *frm )
     ratecontrol_entry_t *rce = &h->rc->entry[frm->i_frame];
     if( h->param.analyse.i_weighted_pred <= 0 )
         return;
-    if( rce->i_weight_denom >= 0 )
-        SET_WEIGHT( frm->weight[0][0], 1, rce->weight[0], rce->i_weight_denom, rce->weight[1] );
+
+    if( rce->i_weight_denom[0] >= 0 )
+        SET_WEIGHT( frm->weight[0][0], 1, rce->weight[0][0], rce->i_weight_denom[0], rce->weight[0][1] );
+
+    if( rce->i_weight_denom[1] >= 0 )
+    {
+        SET_WEIGHT( frm->weight[0][1], 1, rce->weight[1][0], rce->i_weight_denom[1], rce->weight[1][1] );
+        SET_WEIGHT( frm->weight[0][2], 1, rce->weight[2][0], rce->i_weight_denom[1], rce->weight[2][1] );
+    }
 }
 
 /* After encoding one frame, save stats and update ratecontrol state */
@@ -1545,9 +1558,19 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
                 goto fail;
         }
 
-        if( h->sh.weight[0][0].weightfn )
+        if( h->param.analyse.i_weighted_pred == X264_WEIGHTP_SMART && h->sh.weight[0][0].weightfn )
         {
-            if( fprintf( rc->p_stat_file_out, "w:%"PRId32",%"PRId32",%"PRId32, h->sh.weight[0][0].i_denom, h->sh.weight[0][0].i_scale, h->sh.weight[0][0].i_offset ) < 0 )
+            if( fprintf( rc->p_stat_file_out, "w:%d,%d,%d",
+                         h->sh.weight[0][0].i_denom, h->sh.weight[0][0].i_scale, h->sh.weight[0][0].i_offset ) < 0 )
+                goto fail;
+            if( h->sh.weight[0][1].weightfn || h->sh.weight[0][2].weightfn )
+            {
+                if( fprintf( rc->p_stat_file_out, ",%d,%d,%d,%d,%d\n",
+                             h->sh.weight[0][1].i_denom, h->sh.weight[0][1].i_scale, h->sh.weight[0][1].i_offset,
+                             h->sh.weight[0][2].i_scale, h->sh.weight[0][2].i_offset ) < 0 )
+                    goto fail;
+            }
+            else if( fprintf( rc->p_stat_file_out, "\n" ) < 0 )
                 goto fail;
         }
 
@@ -1617,7 +1640,7 @@ int x264_ratecontrol_end( x264_t *h, int bits, int *filler )
         }
         else
         {
-            h->fenc->hrd_timing.cpb_removal_time = rc->nrt_first_access_unit + (double)h->fenc->i_cpb_delay *
+            h->fenc->hrd_timing.cpb_removal_time = rc->nrt_first_access_unit + (double)(h->fenc->i_cpb_delay - h->i_cpb_delay_pir_offset) *
                                                    h->sps->vui.i_num_units_in_tick / h->sps->vui.i_time_scale;
 
             double cpb_earliest_arrival_time = h->fenc->hrd_timing.cpb_removal_time - (double)rc->initial_cpb_removal_delay / 90000;
@@ -1977,7 +2000,7 @@ static double clip_qscale( x264_t *h, int pict_type, double q )
             {
                 q *= X264_MAX( pbbits / space, bits / (0.5 * rcc->buffer_size) );
             }
-            q = X264_MAX( q0-5, q );
+            q = X264_MAX( q0/2, q );
         }
 
         if( !rcc->b_vbv_min_rate )
@@ -2053,9 +2076,9 @@ static float rate_estimate_qscale( x264_t *h )
             q += rcc->pb_offset;
 
         if( rcc->b_2pass && rcc->b_vbv )
-            rcc->frame_size_planned = qscale2bits( &rce, q );
+            rcc->frame_size_planned = qscale2bits( &rce, qp2qscale( q ) );
         else
-            rcc->frame_size_planned = predict_size( rcc->pred_b_from_p, q, h->fref1[h->i_ref1-1]->i_satd );
+            rcc->frame_size_planned = predict_size( rcc->pred_b_from_p, qp2qscale( q ), h->fref1[h->i_ref1-1]->i_satd );
         h->rc->frame_size_estimated = rcc->frame_size_planned;
 
         /* For row SATDs */
@@ -2208,16 +2231,19 @@ static float rate_estimate_qscale( x264_t *h )
             }
             else if( h->i_frame > 0 )
             {
-                /* Asymmetric clipping, because symmetric would prevent
-                 * overflow control in areas of rapidly oscillating complexity */
-                double lmin = rcc->last_qscale_for[pict_type] / rcc->lstep;
-                double lmax = rcc->last_qscale_for[pict_type] * rcc->lstep;
-                if( overflow > 1.1 && h->i_frame > 3 )
-                    lmax *= rcc->lstep;
-                else if( overflow < 0.9 )
-                    lmin /= rcc->lstep;
+                if( h->param.rc.i_rc_method != X264_RC_CRF )
+                {
+                    /* Asymmetric clipping, because symmetric would prevent
+                     * overflow control in areas of rapidly oscillating complexity */
+                    double lmin = rcc->last_qscale_for[pict_type] / rcc->lstep;
+                    double lmax = rcc->last_qscale_for[pict_type] * rcc->lstep;
+                    if( overflow > 1.1 && h->i_frame > 3 )
+                        lmax *= rcc->lstep;
+                    else if( overflow < 0.9 )
+                        lmin /= rcc->lstep;
 
-                q = x264_clip3f(q, lmin, lmax);
+                    q = x264_clip3f(q, lmin, lmax);
+                }
             }
             else if( h->param.rc.i_rc_method == X264_RC_CRF && rcc->qcompress != 1 )
             {

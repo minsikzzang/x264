@@ -39,7 +39,7 @@
 
 #include <stdarg.h>
 
-#define X264_BUILD 107
+#define X264_BUILD 108
 
 /* x264_t:
  *      opaque handler for encoder */
@@ -143,6 +143,7 @@ typedef struct
 #define X264_RC_CQP                  0
 #define X264_RC_CRF                  1
 #define X264_RC_ABR                  2
+#define X264_QP_AUTO                 0
 #define X264_AQ_NONE                 0
 #define X264_AQ_VARIANCE             1
 #define X264_AQ_AUTOVARIANCE         2
@@ -343,7 +344,7 @@ typedef struct x264_param_t
     {
         int         i_rc_method;    /* X264_RC_* */
 
-        int         i_qp_constant;  /* 0 to (51 + 6*(x264_bit_depth-8)) */
+        int         i_qp_constant;  /* 0 to (51 + 6*(x264_bit_depth-8)). 0=lossless */
         int         i_qp_min;       /* min allowed QP value */
         int         i_qp_max;       /* max allowed QP value */
         int         i_qp_step;      /* max QP step between frames */
@@ -377,6 +378,15 @@ typedef struct x264_param_t
         int         i_zones;        /* number of zone_t's */
         char        *psz_zones;     /* alternate method of specifying zones */
     } rc;
+
+    /* Cropping Rectangle parameters: added to those implicitly defined by
+       non-mod16 video resolutions. */
+    struct {
+        unsigned int i_left;
+        unsigned int i_top;
+        unsigned int i_right;
+        unsigned int i_bottom;
+    } crop_rect;
 
     /* Muxing parameters */
     int b_aud;                  /* generate access unit delimiters */
@@ -526,7 +536,13 @@ int x264_param_parse( x264_param_t *, const char *name, const char *value );
  *      Currently available presets are, ordered from fastest to slowest: */
 static const char * const x264_preset_names[] = { "ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo", 0 };
 
-/*      Warning: the speed of these presets scales dramatically.  Ultrafast is a full
+/*      The presets can also be indexed numerically, as in:
+ *      x264_param_default_preset( &param, "3", ... )
+ *      with ultrafast mapping to "0" and placebo mapping to "9".  This mapping may
+ *      of course change if new presets are added in between, but will always be
+ *      ordered from fastest to slowest.
+ *
+ *      Warning: the speed of these presets scales dramatically.  Ultrafast is a full
  *      100 times faster than placebo!
  *
  *      Currently available tunings are: */
@@ -652,7 +668,7 @@ typedef struct
      *     mixing of auto and forced frametypes is done.
      * Out: type of the picture encoded */
     int     i_type;
-    /* In: force quantizer for > 0 */
+    /* In: force quantizer for != X264_QP_AUTO */
     int     i_qpplus1;
     /* In: pic_struct, for pulldown/doubling/etc...used only if b_pic_timing_sei=1.
      *     use pic_struct_e for pic_struct inputs */

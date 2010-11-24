@@ -97,7 +97,7 @@ void x264_param_default( x264_param_t *param )
     param->rc.i_vbv_buffer_size = 0;
     param->rc.f_vbv_buffer_init = 0.9;
     param->rc.i_qp_constant = 23 + QP_BD_OFFSET;
-    param->rc.f_rf_constant = 23 + QP_BD_OFFSET;
+    param->rc.f_rf_constant = 23;
     param->rc.i_qp_min = 10;
     param->rc.i_qp_max = QP_MAX;
     param->rc.i_qp_step = 4;
@@ -169,6 +169,11 @@ void x264_param_default( x264_param_t *param )
 
 static int x264_param_apply_preset( x264_param_t *param, const char *preset )
 {
+    char *end;
+    int i = strtol( preset, &end, 10 );
+    if( *end == 0 && i >= 0 && i < sizeof(x264_preset_names)/sizeof(*x264_preset_names)-1 )
+        preset = x264_preset_names[i];
+
     if( !strcasecmp( preset, "ultrafast" ) )
     {
         param->i_frame_reference = 1;
@@ -463,8 +468,8 @@ int x264_param_apply_profile( x264_param_t *param, const char *profile )
         x264_log( NULL, X264_LOG_ERROR, "invalid profile: %s\n", profile );
         return -1;
     }
-    if( (param->rc.i_rc_method == X264_RC_CQP && param->rc.i_qp_constant == 0) ||
-        (param->rc.i_rc_method == X264_RC_CRF && param->rc.f_rf_constant == 0) )
+    if( (param->rc.i_rc_method == X264_RC_CQP && param->rc.i_qp_constant <= 0) ||
+        (param->rc.i_rc_method == X264_RC_CRF && (int)(param->rc.f_rf_constant + QP_BD_OFFSET) <= 0) )
     {
         x264_log( NULL, X264_LOG_ERROR, "%s profile doesn't support lossless\n", profile );
         return -1;
@@ -947,6 +952,9 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->rc.f_complexity_blur = atof(value);
     OPT("zones")
         p->rc.psz_zones = strdup(value);
+    OPT("crop-rect")
+        b_error |= sscanf( value, "%u,%u,%u,%u", &p->crop_rect.i_left, &p->crop_rect.i_top,
+                                                 &p->crop_rect.i_right, &p->crop_rect.i_bottom ) != 4;
     OPT("psnr")
         p->analyse.b_psnr = atobool(value);
     OPT("ssim")
@@ -1033,7 +1041,7 @@ void x264_picture_init( x264_picture_t *pic )
 {
     memset( pic, 0, sizeof( x264_picture_t ) );
     pic->i_type = X264_TYPE_AUTO;
-    pic->i_qpplus1 = 0;
+    pic->i_qpplus1 = X264_QP_AUTO;
     pic->i_pic_struct = PIC_STRUCT_AUTO;
 }
 
@@ -1192,6 +1200,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, "%dx%d ", p->i_width, p->i_height );
         s += sprintf( s, "fps=%u/%u ", p->i_fps_num, p->i_fps_den );
         s += sprintf( s, "timebase=%u/%u ", p->i_timebase_num, p->i_timebase_den );
+        s += sprintf( s, "bitdepth=%d", BIT_DEPTH );
     }
 
     s += sprintf( s, "cabac=%d", p->b_cabac );

@@ -75,6 +75,10 @@ cc_check() {
         log_msg "$CC conftest.c $CFLAGS $2 $LDFLAGSCLI $LDFLAGS"
         cat conftest.log >> config.log
         log_msg "--------------------------------------------------"
+        log_msg "Failed program was:"
+        log_msg "--------------------------------------------------"
+        cat conftest.c >> config.log
+        log_msg "--------------------------------------------------"
     fi
     return $res
 }
@@ -94,6 +98,10 @@ cpp_check() {
         log_msg "--------------------------------------------------"
         cat conftest.log >> config.log
         log_msg "--------------------------------------------------"
+        log_msg "Failed program was:"
+        log_msg "--------------------------------------------------"
+        cat conftest.c >> config.log
+        log_msg "--------------------------------------------------"
     fi
     return $res
 }
@@ -111,6 +119,10 @@ as_check() {
         log_msg "--------------------------------------------------"
         log_msg "$AS conftest.asm $ASFLAGS $2 -o conftest.o"
         cat conftest.log >> config.log
+        log_msg "--------------------------------------------------"
+        log_msg "Failed program was:"
+        log_msg "--------------------------------------------------"
+        cat conftest.asm >> config.log
         log_msg "--------------------------------------------------"
     fi
     return $res
@@ -601,7 +613,7 @@ if [ "$lavf" = "auto" ] ; then
 fi
 
 if [ "$ffms" = "auto" ] ; then
-    ffms_major="2"; ffms_minor="13"; ffms_micro="1"; ffms_bump="0"
+    ffms_major="2"; ffms_minor="14"; ffms_micro="0"; ffms_bump="0"
     ffms="no"
 
     if ${cross_prefix}pkg-config --exists ffms2 2>$DEVNULL; then
@@ -632,7 +644,9 @@ if [ "$ffms" = "yes" ]; then
     LDFLAGSCLI="$FFMS2_LIBS $LDFLAGSCLI"
     CFLAGS="$CFLAGS $FFMS2_CFLAGS"
     define HAVE_FFMS
-elif [ "$lavf" = "yes" ]; then
+fi
+
+if [ "$lavf" = "yes" ]; then
     LDFLAGSCLI="$LAVF_LIBS $LDFLAGSCLI"
     CFLAGS="$CFLAGS $LAVF_CFLAGS"
 elif [ "$swscale" = "yes" ]; then
@@ -709,10 +723,12 @@ if cc_check '' -Wshadow ; then
 fi
 
 if [ "$bit_depth" -gt "8" ]; then
-    define X264_HIGH_BIT_DEPTH
+    define HIGH_BIT_DEPTH
+    ASFLAGS="$ASFLAGS -DHIGH_BIT_DEPTH"
 fi
 
 define BIT_DEPTH $bit_depth
+ASFLAGS="$ASFLAGS -DBIT_DEPTH=$bit_depth"
 
 if [ $gpl = yes ]; then
     define HAVE_GPL 1

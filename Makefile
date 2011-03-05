@@ -6,7 +6,7 @@ all: default
 
 SRCS = common/mc.c common/predict.c common/pixel.c common/macroblock.c \
        common/frame.c common/dct.c common/cpu.c common/cabac.c \
-       common/common.c common/mdate.c common/rectangle.c \
+       common/common.c common/osdep.c common/rectangle.c \
        common/set.c common/quant.c common/deblock.c common/vlc.c \
        common/mvpred.c common/bitstream.c \
        encoder/analyse.c encoder/me.c encoder/ratecontrol.c \
@@ -25,34 +25,38 @@ SRCSO =
 CONFIG := $(shell cat config.h)
 
 # GPL-only files
-ifeq ($(GPL),yes)
+ifneq ($(findstring HAVE_GPL 1, $(CONFIG)),)
 SRCCLI +=
 endif
 
 # Optional module sources
-ifneq ($(findstring HAVE_AVS, $(CONFIG)),)
+ifneq ($(findstring HAVE_AVS 1, $(CONFIG)),)
 SRCCLI += input/avs.c
 endif
 
-ifneq ($(findstring HAVE_PTHREAD, $(CONFIG)),)
+ifneq ($(findstring HAVE_THREAD 1, $(CONFIG)),)
 SRCCLI += input/thread.c
 SRCS   += common/threadpool.c
 endif
 
-ifneq ($(findstring HAVE_LAVF, $(CONFIG)),)
+ifneq ($(findstring HAVE_WIN32THREAD 1, $(CONFIG)),)
+SRCS += common/win32thread.c
+endif
+
+ifneq ($(findstring HAVE_LAVF 1, $(CONFIG)),)
 SRCCLI += input/lavf.c
 endif
 
-ifneq ($(findstring HAVE_FFMS, $(CONFIG)),)
+ifneq ($(findstring HAVE_FFMS 1, $(CONFIG)),)
 SRCCLI += input/ffms.c
 endif
 
-ifneq ($(findstring HAVE_GPAC, $(CONFIG)),)
+ifneq ($(findstring HAVE_GPAC 1, $(CONFIG)),)
 SRCCLI += output/mp4.c
 endif
 
 # Visualization sources
-ifeq ($(VIS),yes)
+ifneq ($(findstring HAVE_VISUALIZE 1, $(CONFIG)),)
 SRCS   += common/visualize.c common/display-x11.c
 endif
 
@@ -109,9 +113,11 @@ endif
 endif
 
 # VIS optims
-ifeq ($(ARCH),UltraSparc)
+ifeq ($(ARCH),UltraSPARC)
+ifeq ($(findstring HIGH_BIT_DEPTH, $(CONFIG)),)
 ASMSRC += common/sparc/pixel.asm
 OBJASM  = $(ASMSRC:%.asm=%.o)
+endif
 endif
 
 ifneq ($(HAVE_GETOPT_LONG),1)
@@ -203,7 +209,7 @@ clean:
 	- sed -e 's/ *-fprofile-\(generate\|use\)//g' config.mak > config.mak2 && mv config.mak2 config.mak
 
 distclean: clean
-	rm -f config.mak config.h config.log x264.pc
+	rm -f config.mak x264_config.h config.h config.log x264.pc
 	rm -rf test/
 
 install: x264$(EXE) $(SONAME)
@@ -212,6 +218,7 @@ install: x264$(EXE) $(SONAME)
 	install -d $(DESTDIR)$(libdir)
 	install -d $(DESTDIR)$(libdir)/pkgconfig
 	install -m 644 x264.h $(DESTDIR)$(includedir)
+	install -m 644 x264_config.h $(DESTDIR)$(includedir)
 	install -m 644 libx264.a $(DESTDIR)$(libdir)
 	install -m 644 x264.pc $(DESTDIR)$(libdir)/pkgconfig
 	install x264$(EXE) $(DESTDIR)$(bindir)
@@ -225,7 +232,7 @@ endif
 	$(if $(IMPLIBNAME), install -m 644 $(IMPLIBNAME) $(DESTDIR)$(libdir))
 
 uninstall:
-	rm -f $(DESTDIR)$(includedir)/x264.h $(DESTDIR)$(libdir)/libx264.a
+	rm -f $(DESTDIR)$(includedir)/x264.h $(DESTDIR)$(includedir)/x264_config.h $(DESTDIR)$(libdir)/libx264.a
 	rm -f $(DESTDIR)$(bindir)/x264$(EXE) $(DESTDIR)$(libdir)/pkgconfig/x264.pc
 	$(if $(SONAME), rm -f $(DESTDIR)$(libdir)/$(SONAME) $(DESTDIR)$(libdir)/libx264.$(SOSUFFIX))
 

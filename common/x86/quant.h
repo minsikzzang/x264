@@ -1,7 +1,7 @@
 /*****************************************************************************
  * quant.h: x86 quantization and level-run
  *****************************************************************************
- * Copyright (C) 2005-2010 x264 project
+ * Copyright (C) 2005-2011 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Jason Garrett-Glaser <darkshikari@gmail.com>
@@ -47,16 +47,20 @@ int x264_quant_8x8_sse4( dctcoef dct[64], udctcoef mf[64], udctcoef bias[64] );
 void x264_dequant_4x4_mmx( int16_t dct[16], int dequant_mf[6][16], int i_qp );
 void x264_dequant_4x4dc_mmxext( int16_t dct[16], int dequant_mf[6][16], int i_qp );
 void x264_dequant_8x8_mmx( int16_t dct[64], int dequant_mf[6][64], int i_qp );
-void x264_dequant_4x4_sse2( int16_t dct[16], int dequant_mf[6][16], int i_qp );
-void x264_dequant_4x4dc_sse2( int16_t dct[16], int dequant_mf[6][16], int i_qp );
-void x264_dequant_8x8_sse2( int16_t dct[64], int dequant_mf[6][64], int i_qp );
+void x264_dequant_4x4_sse2( dctcoef dct[16], int dequant_mf[6][16], int i_qp );
+void x264_dequant_4x4dc_sse2( dctcoef dct[16], int dequant_mf[6][16], int i_qp );
+void x264_dequant_8x8_sse2( dctcoef dct[64], int dequant_mf[6][64], int i_qp );
+void x264_dequant_4x4_avx( dctcoef dct[16], int dequant_mf[6][16], int i_qp );
+void x264_dequant_4x4dc_avx( dctcoef dct[16], int dequant_mf[6][16], int i_qp );
+void x264_dequant_8x8_avx( dctcoef dct[64], int dequant_mf[6][64], int i_qp );
 void x264_dequant_4x4_flat16_mmx( int16_t dct[16], int dequant_mf[6][16], int i_qp );
 void x264_dequant_8x8_flat16_mmx( int16_t dct[64], int dequant_mf[6][64], int i_qp );
 void x264_dequant_4x4_flat16_sse2( int16_t dct[16], int dequant_mf[6][16], int i_qp );
 void x264_dequant_8x8_flat16_sse2( int16_t dct[64], int dequant_mf[6][64], int i_qp );
-void x264_denoise_dct_mmx( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
-void x264_denoise_dct_sse2( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
+void x264_denoise_dct_mmx  ( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
+void x264_denoise_dct_sse2 ( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
 void x264_denoise_dct_ssse3( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
+void x264_denoise_dct_avx  ( dctcoef *dct, uint32_t *sum, udctcoef *offset, int size );
 int x264_decimate_score15_mmxext( dctcoef *dct );
 int x264_decimate_score15_sse2  ( dctcoef *dct );
 int x264_decimate_score15_ssse3 ( dctcoef *dct );

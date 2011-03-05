@@ -1,7 +1,7 @@
 /*****************************************************************************
  * macroblock.h: macroblock common functions
  *****************************************************************************
- * Copyright (C) 2005-2010 x264 project
+ * Copyright (C) 2005-2011 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -364,7 +364,7 @@ static ALWAYS_INLINE uint32_t pack16to32_mask( int a, int b )
 }
 static ALWAYS_INLINE uint64_t pack32to64( uint32_t a, uint32_t b )
 {
-#ifdef WORDS_BIGENDIAN
+#if WORDS_BIGENDIAN
    return b + ((uint64_t)a<<32);
 #else
    return a + ((uint64_t)b<<32);

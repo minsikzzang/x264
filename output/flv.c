@@ -1,7 +1,7 @@
 /*****************************************************************************
  * flv.c: flv muxer
  *****************************************************************************
- * Copyright (C) 2009-2010 x264 project
+ * Copyright (C) 2009-2011 x264 project
  *
  * Authors: Kieran Kunhya <kieran@kunhya.com>
  *
@@ -310,7 +310,7 @@ static int close_file( hnd_t handle, int64_t largest_pts, int64_t second_largest
 
     double total_duration = (2 * largest_pts - second_largest_pts) * p_flv->d_timebase;
 
-    if( x264_is_regular_file( c->fp ) )
+    if( x264_is_regular_file( c->fp ) && total_duration > 0 )
     {
         double framerate;
         uint64_t filesize = ftell( c->fp );

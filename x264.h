@@ -1,7 +1,7 @@
 /*****************************************************************************
  * x264.h: x264 public header
  *****************************************************************************
- * Copyright (C) 2003-2010 x264 project
+ * Copyright (C) 2003-2011 x264 project
  *
  * Authors: Laurent Aimar <fenrir@via.ecp.fr>
  *          Loren Merritt <lorenm@u.washington.edu>
@@ -39,7 +39,9 @@
 
 #include <stdarg.h>
 
-#define X264_BUILD 108
+#include "x264_config.h"
+
+#define X264_BUILD 114
 
 /* x264_t:
  *      opaque handler for encoder */
@@ -120,6 +122,8 @@ typedef struct
 #define X264_CPU_FAST_NEON_MRC  0x080000  /* Transfer from NEON to ARM register is fast (Cortex-A9) */
 #define X264_CPU_SLOW_CTZ       0x100000  /* BSR/BSF x86 instructions are really slow on some CPUs */
 #define X264_CPU_SLOW_ATOM      0x200000  /* The Atom just sucks */
+#define X264_CPU_AVX            0x400000  /* AVX support: requires OS support even if YMM registers
+                                           * aren't used. */
 
 /* Analyse flags
  */
@@ -151,7 +155,7 @@ typedef struct
 #define X264_B_ADAPT_FAST            1
 #define X264_B_ADAPT_TRELLIS         2
 #define X264_WEIGHTP_NONE            0
-#define X264_WEIGHTP_BLIND           1
+#define X264_WEIGHTP_SIMPLE          1
 #define X264_WEIGHTP_SMART           2
 #define X264_B_PYRAMID_NONE          0
 #define X264_B_PYRAMID_STRICT        1
@@ -387,6 +391,9 @@ typedef struct x264_param_t
         unsigned int i_right;
         unsigned int i_bottom;
     } crop_rect;
+
+    /* frame packing arrangement flag */
+    int i_frame_packing;
 
     /* Muxing parameters */
     int b_aud;                  /* generate access unit delimiters */
@@ -670,8 +677,9 @@ typedef struct
     int     i_type;
     /* In: force quantizer for != X264_QP_AUTO */
     int     i_qpplus1;
-    /* In: pic_struct, for pulldown/doubling/etc...used only if b_pic_timing_sei=1.
-     *     use pic_struct_e for pic_struct inputs */
+    /* In: pic_struct, for pulldown/doubling/etc...used only if b_pic_struct=1.
+     *     use pic_struct_e for pic_struct inputs
+     * Out: pic_struct element associated with frame */
     int     i_pic_struct;
     /* Out: whether this frame is a keyframe.  Important when using modes that result in
      * SEI recovery points being used instead of IDR frames. */
@@ -766,6 +774,10 @@ void    x264_encoder_close  ( x264_t * );
  *      return the number of currently delayed (buffered) frames
  *      this should be used at the end of the stream, to know when you have all the encoded frames. */
 int     x264_encoder_delayed_frames( x264_t * );
+/* x264_encoder_maximum_delayed_frames( x264_t *h ):
+ *      return the maximum number of delayed (buffered) frames that can occur with the current
+ *      parameters. */
+int     x264_encoder_maximum_delayed_frames( x264_t *h );
 /* x264_encoder_intra_refresh:
  *      If an intra refresh is not in progress, begin one with the next P-frame.
  *      If an intra refresh is in progress, begin one as soon as the current one finishes.

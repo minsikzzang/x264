@@ -1,7 +1,7 @@
 /*****************************************************************************
  * common.c: misc common functions
  *****************************************************************************
- * Copyright (C) 2003-2010 x264 project
+ * Copyright (C) 2003-2011 x264 project
  *
  * Authors: Loren Merritt <lorenm@u.washington.edu>
  *          Laurent Aimar <fenrir@via.ecp.fr>
@@ -98,7 +98,7 @@ void x264_param_default( x264_param_t *param )
     param->rc.f_vbv_buffer_init = 0.9;
     param->rc.i_qp_constant = 23 + QP_BD_OFFSET;
     param->rc.f_rf_constant = 23;
-    param->rc.i_qp_min = 10;
+    param->rc.i_qp_min = 0;
     param->rc.i_qp_max = QP_MAX;
     param->rc.i_qp_step = 4;
     param->rc.f_ip_factor = 1.4;
@@ -165,6 +165,7 @@ void x264_param_default( x264_param_t *param )
     param->b_tff = 1;
     param->b_pic_struct = 0;
     param->b_fake_interlaced = 0;
+    param->i_frame_packing = -1;
 }
 
 static int x264_param_apply_preset( x264_param_t *param, const char *preset )
@@ -204,7 +205,7 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->analyse.b_mixed_references = 0;
         param->analyse.i_trellis = 0;
         param->rc.b_mb_tree = 0;
-        param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+        param->analyse.i_weighted_pred = X264_WEIGHTP_SIMPLE;
         param->rc.i_lookahead = 0;
     }
     else if( !strcasecmp( preset, "veryfast" ) )
@@ -214,7 +215,7 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->i_frame_reference = 1;
         param->analyse.b_mixed_references = 0;
         param->analyse.i_trellis = 0;
-        param->analyse.i_weighted_pred = X264_WEIGHTP_NONE;
+        param->analyse.i_weighted_pred = X264_WEIGHTP_SIMPLE;
         param->rc.i_lookahead = 10;
     }
     else if( !strcasecmp( preset, "faster" ) )
@@ -222,13 +223,14 @@ static int x264_param_apply_preset( x264_param_t *param, const char *preset )
         param->analyse.b_mixed_references = 0;
         param->i_frame_reference = 2;
         param->analyse.i_subpel_refine = 4;
-        param->analyse.i_weighted_pred = X264_WEIGHTP_BLIND;
+        param->analyse.i_weighted_pred = X264_WEIGHTP_SIMPLE;
         param->rc.i_lookahead = 20;
     }
     else if( !strcasecmp( preset, "fast" ) )
     {
         param->i_frame_reference = 2;
         param->analyse.i_subpel_refine = 6;
+        param->analyse.i_weighted_pred = X264_WEIGHTP_SIMPLE;
         param->rc.i_lookahead = 30;
     }
     else if( !strcasecmp( preset, "medium" ) )
@@ -977,6 +979,8 @@ int x264_param_parse( x264_param_t *p, const char *name, const char *value )
         p->b_pic_struct = atobool(value);
     OPT("fake-interlaced")
         p->b_fake_interlaced = atobool(value);
+    OPT("frame-packing")
+        p->i_frame_packing = atoi(value);
     else
         return X264_PARAM_BAD_NAME;
 #undef OPT
@@ -1165,10 +1169,10 @@ char *x264_slurp_file( const char *filename )
     b_error |= ( i_size = ftell( fh ) ) <= 0;
     b_error |= fseek( fh, 0, SEEK_SET ) < 0;
     if( b_error )
-        return NULL;
+        goto error;
     buf = x264_malloc( i_size+2 );
-    if( buf == NULL )
-        return NULL;
+    if( !buf )
+        goto error;
     b_error |= fread( buf, 1, i_size, fh ) != i_size;
     if( buf[i_size-1] != '\n' )
         buf[i_size++] = '\n';
@@ -1180,6 +1184,9 @@ char *x264_slurp_file( const char *filename )
         return NULL;
     }
     return buf;
+error:
+    fclose( fh );
+    return NULL;
 }
 
 /****************************************************************************
@@ -1200,7 +1207,7 @@ char *x264_param2string( x264_param_t *p, int b_res )
         s += sprintf( s, "%dx%d ", p->i_width, p->i_height );
         s += sprintf( s, "fps=%u/%u ", p->i_fps_num, p->i_fps_den );
         s += sprintf( s, "timebase=%u/%u ", p->i_timebase_num, p->i_timebase_den );
-        s += sprintf( s, "bitdepth=%d", BIT_DEPTH );
+        s += sprintf( s, "bitdepth=%d ", BIT_DEPTH );
     }
 
     s += sprintf( s, "cabac=%d", p->b_cabac );
@@ -1280,6 +1287,15 @@ char *x264_param2string( x264_param_t *p, int b_res )
     }
     else if( p->rc.i_rc_method == X264_RC_CQP )
         s += sprintf( s, " qp=%d", p->rc.i_qp_constant );
+
+    if( p->rc.i_vbv_buffer_size )
+        s += sprintf( s, " nal_hrd=%s", x264_nal_hrd_names[p->i_nal_hrd] );
+    if( p->crop_rect.i_left | p->crop_rect.i_top | p->crop_rect.i_right | p->crop_rect.i_bottom )
+        s += sprintf( s, " crop_rect=%u,%u,%u,%u", p->crop_rect.i_left, p->crop_rect.i_top,
+                                                   p->crop_rect.i_right, p->crop_rect.i_bottom );
+    if( p->i_frame_packing >= 0 )
+        s += sprintf( s, " frame-packing=%d", p->i_frame_packing );
+
     if( !(p->rc.i_rc_method == X264_RC_CQP && p->rc.i_qp_constant == 0) )
     {
         s += sprintf( s, " ip_ratio=%.2f", p->rc.f_ip_factor );
@@ -1294,8 +1310,6 @@ char *x264_param2string( x264_param_t *p, int b_res )
             s += sprintf( s, " zones" );
     }
 
-    if( p->rc.i_vbv_buffer_size )
-        s += sprintf( s, " nal_hrd=%s", x264_nal_hrd_names[p->i_nal_hrd] );
     return buf;
 }
 

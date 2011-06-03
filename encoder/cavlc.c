@@ -100,9 +100,8 @@ static inline int block_residual_write_cavlc_escape( x264_t *h, int i_suffix_len
                 /* Weight highly against overflows. */
                 s->i_bits_encoded += 2000;
 #else
-                x264_log(h, X264_LOG_WARNING, "OVERFLOW levelcode=%d is only allowed in High Profile\n", i_level_code );
-                /* clip level, preserving sign */
-                i_level_code = (1<<12) - 2 + (i_level_code & 1);
+                /* We've had an overflow; note it down and re-encode the MB later. */
+                h->mb.b_overflow = 1;
 #endif
             }
         }
@@ -296,10 +295,10 @@ void x264_macroblock_write_cavlc( x264_t *h )
     int       i_mb_pos_tex;
 #endif
 
-    if( h->sh.b_mbaff
+    if( SLICE_MBAFF
         && (!(h->mb.i_mb_y & 1) || IS_SKIP(h->mb.type[h->mb.i_mb_xy - h->mb.i_mb_stride])) )
     {
-        bs_write1( s, h->mb.b_interlaced );
+        bs_write1( s, MB_INTERLACED );
     }
 
 #if !RDO_SKIP_BS

@@ -27,13 +27,9 @@
  * For more information, contact us at licensing@x264.com.
  *****************************************************************************/
 
-#include <stdlib.h>
-#include <math.h>
-
 #include <signal.h>
 #define _GNU_SOURCE
 #include <getopt.h>
-
 #include "common/common.h"
 #include "x264cli.h"
 #include "input/input.h"
@@ -73,6 +69,8 @@ static void sigint_handler( int a )
         exit(0);
     b_ctrl_c = 1;
 }
+
+static char UNUSED originalCTitle[200] = "";
 
 typedef struct {
     int b_progress;
@@ -124,7 +122,8 @@ static const char * const muxer_names[] =
 static const char * const pulldown_names[] = { "none", "22", "32", "64", "double", "triple", "euro", 0 };
 static const char * const log_level_names[] = { "none", "error", "warning", "info", "debug", 0 };
 
-typedef struct{
+typedef struct
+{
     int mod;
     uint8_t pattern[24];
     float fps_factor;
@@ -227,10 +226,12 @@ static void print_version_info()
     printf( "(ffmpegsource %d.%d.%d.%d)\n", FFMS_VERSION >> 24, (FFMS_VERSION & 0xff0000) >> 16, (FFMS_VERSION & 0xff00) >> 8, FFMS_VERSION & 0xff );
 #endif
     printf( "built on " __DATE__ ", " );
-#ifdef __GNUC__
+#ifdef __INTEL_COMPILER
+    printf( "intel: %.2f (%d)\n", __INTEL_COMPILER / 100.f, __INTEL_COMPILER_BUILD_DATE );
+#elif defined(__GNUC__)
     printf( "gcc: " __VERSION__ "\n" );
 #else
-    printf( "using a non-gcc compiler\n" );
+    printf( "using an unknown compiler\n" );
 #endif
     printf( "configuration: --bit-depth=%d\n", x264_bit_depth );
     printf( "x264 license: " );
@@ -262,9 +263,14 @@ int main( int argc, char **argv )
     _setmode(_fileno(stdout), _O_BINARY);
 #endif
 
+    GetConsoleTitle( originalCTitle, sizeof(originalCTitle) );
+
     /* Parse command line */
     if( parse( argc, argv, &param, &opt ) < 0 )
         ret = -1;
+
+    /* Restore title; it can be changed by input modules */
+    SetConsoleTitle( originalCTitle );
 
     /* Control-C handler */
     signal( SIGINT, sigint_handler );
@@ -283,6 +289,8 @@ int main( int argc, char **argv )
         fclose( opt.tcfile_out );
     if( opt.qpfile )
         fclose( opt.qpfile );
+
+    SetConsoleTitle( originalCTitle );
 
     return ret;
 }
@@ -323,11 +331,11 @@ static void print_csp_names( int longhelp )
     printf( "\n" );
     printf( "                              - valid csps for `lavf' demuxer:\n" );
     printf( INDENT );
-    int line_len = strlen( INDENT );
+    size_t line_len = strlen( INDENT );
     for( enum PixelFormat i = PIX_FMT_NONE+1; i < PIX_FMT_NB; i++ )
     {
         const char *pfname = av_pix_fmt_descriptors[i].name;
-        int name_len = strlen( pfname );
+        size_t name_len = strlen( pfname );
         if( line_len + name_len > (80 - strlen( ", " )) )
         {
             printf( "\n" INDENT );
@@ -533,11 +541,7 @@ static void help( x264_param_t *defaults, int longhelp )
         "                                  - strict: Strictly hierarchical pyramid\n"
         "                                  - normal: Non-strict (not Blu-ray compatible)\n",
         strtable_lookup( x264_b_pyramid_names, defaults->i_bframe_pyramid ) );
-    H1( "      --open-gop <string>     Use recovery points to close GOPs [none]\n"
-        "                                  - none: closed GOPs only\n"
-        "                                  - normal: standard open GOPs\n"
-        "                                            (not Blu-ray compatible)\n"
-        "                                  - bluray: Blu-ray-compatible open GOPs\n"
+    H1( "      --open-gop              Use recovery points to close GOPs\n"
         "                              Only available with b-frames\n" );
     H1( "      --no-cabac              Disable CABAC\n" );
     H1( "  -r, --ref <integer>         Number of reference frames [%d]\n", defaults->i_frame_reference );
@@ -733,6 +737,7 @@ static void help( x264_param_t *defaults, int longhelp )
     H0( "      --seek <integer>        First frame to encode\n" );
     H0( "      --frames <integer>      Maximum number of frames to encode\n" );
     H0( "      --level <string>        Specify level (as defined by Annex A)\n" );
+    H1( "      --bluray-compat         Enable compatibility hacks for Blu-ray support\n" );
     H1( "\n" );
     H1( "  -v, --verbose               Print stats for each frame\n" );
     H1( "      --no-progress           Don't show the progress indicator while encoding\n" );
@@ -823,7 +828,8 @@ static struct option long_options[] =
     { "no-b-adapt",        no_argument, NULL, 0 },
     { "b-bias",      required_argument, NULL, 0 },
     { "b-pyramid",   required_argument, NULL, 0 },
-    { "open-gop",    required_argument, NULL, 0 },
+    { "open-gop",          no_argument, NULL, 0 },
+    { "bluray-compat",     no_argument, NULL, 0 },
     { "min-keyint",  required_argument, NULL, 'i' },
     { "keyint",      required_argument, NULL, 'I' },
     { "intra-refresh",     no_argument, NULL, 0 },
@@ -1393,6 +1399,8 @@ generic_option:
     info.tff        = param->b_tff;
     info.vfr        = param->b_vfr_input;
 
+    input_opt.progress = opt->b_progress;
+
     if( select_input( demuxer, demuxername, input_filename, &opt->hin, &info, &input_opt ) )
         return -1;
 
@@ -1488,11 +1496,15 @@ generic_option:
 
     if( !b_user_interlaced && info.interlaced )
     {
+#if HAVE_INTERLACED
         x264_cli_log( "x264", X264_LOG_WARNING, "input appears to be interlaced, enabling %cff interlaced mode.\n"
                       "                If you want otherwise, use --no-interlaced or --%cff\n",
                       info.tff ? 't' : 'b', info.tff ? 'b' : 't' );
         param->b_interlaced = 1;
         param->b_tff = !!info.tff;
+#else
+        x264_cli_log( "x264", X264_LOG_WARNING, "input appears to be interlaced, but not compiled with interlaced support\n" );
+#endif
     }
 
     /* Automatically reduce reference frame count to match the user's target level
@@ -1644,9 +1656,6 @@ static int encode( x264_param_t *param, cli_opt_t *opt )
     double  duration;
     double  pulldown_pts = 0;
     int     retval = 0;
-    char    UNUSED originalCTitle[200] = "";
-
-    GetConsoleTitle( originalCTitle, sizeof(originalCTitle) );
 
     opt->b_progress &= param->i_log_level < X264_LOG_DEBUG;
 
@@ -1804,8 +1813,6 @@ fail:
         fprintf( stderr, "encoded %d frames, %.2f fps, %.2f kb/s\n", i_frame_output, fps,
                  (double) i_file * 8 / ( 1000 * duration ) );
     }
-
-    SetConsoleTitle( originalCTitle );
 
     return retval;
 }

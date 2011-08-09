@@ -340,13 +340,17 @@ static int open_file( char *psz_filename, hnd_t *p_handle, video_info_t *info, c
     FILE *tcfile_in;
     timecode_hnd_t *h = malloc( sizeof(timecode_hnd_t) );
     FAIL_IF_ERROR( !h, "malloc failed\n" )
-    h->input = input;
+    h->input = cli_input;
     h->p_handle = *p_handle;
+    h->pts = NULL;
     if( opt->timebase )
     {
         ret = sscanf( opt->timebase, "%"SCNu64"/%"SCNu64, &h->timebase_num, &h->timebase_den );
         if( ret == 1 )
+        {
             h->timebase_num = strtoul( opt->timebase, NULL, 10 );
+            h->timebase_den = 0; /* set later by auto timebase generation */
+        }
         FAIL_IF_ERROR( h->timebase_num > UINT32_MAX || h->timebase_den > UINT32_MAX,
                        "timebase you specified exceeds H.264 maximum\n" )
     }

@@ -138,11 +138,7 @@ cextern pd_1024
     psrad       m1, 16
     PSIGND      m1, m0
     mova      [%1], m1
-%if %4
-    por         m5, m1
-%else
-    SWAP         5, 1
-%endif
+    ACCUM      por, 5, 1, %4
 %else ; !sse4
     mova        m0, [%1]
     ABSD        m1, m0
@@ -156,11 +152,7 @@ cextern pd_1024
     psrld       m1, 16
     PSIGND      m1, m0
     mova      [%1], m1
-%if %4
-    por         m5, m1
-%else
-    SWAP         5, 1
-%endif
+    ACCUM     por, 5, 1, %4
 %endif ; cpuflag
 %endmacro
 
@@ -180,11 +172,7 @@ cextern pd_1024
     PSIGND      m3, m1
     mova      [%1], m2
     mova      [%1+mmsize], m3
-%if %4
-    por         m5, m2
-%else
-    SWAP         5, 2
-%endif
+    ACCUM      por, 5, 2, %4
     por         m5, m3
 %else ; !sse4
     QUANT_ONE_DC %1, %2, %3, %4
@@ -208,11 +196,7 @@ cextern pd_1024
     psrad       m1, 16
     PSIGND      m1, m0
     mova      [%1], m1
-%if %4
-    por         m5, m1
-%else
-    SWAP         5, 1
-%endif
+    ACCUM      por, 5, 1, %4
 %endmacro
 
 %macro QUANT_TWO_AC 4
@@ -231,11 +215,7 @@ cextern pd_1024
     PSIGND      m3, m1
     mova      [%1], m2
     mova      [%1+mmsize], m3
-%if %4
-    por         m5, m2
-%else
-    SWAP         5,  2
-%endif
+    ACCUM      por, 5, 2, %4
     por         m5, m3
 %else ; !sse4
     QUANT_ONE_AC_MMX %1, %2, %3, %4
@@ -307,11 +287,7 @@ QUANT_AC 8, 8
     pmulhuw    m0, %2   ; divide
     PSIGNW     m0, m1   ; restore sign
     mova       %1, m0   ; store
-%if %4
-    por        m5, m0
-%else
-    SWAP        5, 0
-%endif
+    ACCUM     por, 5, 0, %4
 %endmacro
 
 %macro QUANT_TWO 7
@@ -327,13 +303,8 @@ QUANT_AC 8, 8
     PSIGNW     m2, m3
     mova       %1, m0
     mova       %2, m2
-%if %7
-    por        m5, m0
+    ACCUM     por, 5, 0, %7
     por        m5, m2
-%else
-    SWAP        5,  0
-    por        m5, m2
-%endif
 %endmacro
 
 ;-----------------------------------------------------------------------------
@@ -428,16 +399,13 @@ QUANT_AC quant_8x8, 8
 ;;; m4      0
     mova      m0, %1
 %ifdef HIGH_BIT_DEPTH
-    pmaddwd   m0, %2
-    paddd     m0, m3
+    pmadcswd   m0, m0, %2, m3
     psrad     m0, m2
 %else
     punpckhwd m1, m0, m4
     punpcklwd m0, m4
-    pmaddwd   m0, %2
-    pmaddwd   m1, %3
-    paddd     m0, m3
-    paddd     m1, m3
+    pmadcswd  m0, m0, %2, m3
+    pmadcswd  m1, m1, %3, m3
     psrad     m0, m2
     psrad     m1, m2
     packssdw  m0, m1
@@ -574,6 +542,9 @@ cglobal dequant_%1x%1_flat16, 0,3
 INIT_XMM sse2
 DEQUANT 4, 4, 1
 DEQUANT 8, 6, 1
+INIT_XMM xop
+DEQUANT 4, 4, 1
+DEQUANT 8, 6, 1
 %else
 %ifndef ARCH_X86_64
 INIT_MMX mmx
@@ -584,6 +555,9 @@ INIT_XMM sse2
 DEQUANT 4, 4, 2
 DEQUANT 8, 6, 2
 INIT_XMM avx
+DEQUANT 4, 4, 2
+DEQUANT 8, 6, 2
+INIT_XMM xop
 DEQUANT 4, 4, 2
 DEQUANT 8, 6, 2
 %endif
@@ -622,8 +596,7 @@ cglobal dequant_4x4dc, 0,3,6
     pshufd m2, m2, 0
 %rep SIZEOF_PIXEL*32/mmsize
     mova      m0, [r0+x]
-    pmaddwd   m0, m2
-    paddd     m0, m4
+    pmadcswd  m0, m0, m2, m4
     psrad     m0, m3
     mova      [r0+x], m0
 %assign x x+mmsize
@@ -650,6 +623,8 @@ cglobal dequant_4x4dc, 0,3,6
 
 %ifdef HIGH_BIT_DEPTH
 INIT_XMM sse2
+DEQUANT_DC d, pmaddwd
+INIT_XMM xop
 DEQUANT_DC d, pmaddwd
 %else
 %ifndef ARCH_X86_64
@@ -946,10 +921,10 @@ cextern decimate_table8
 ;This is not true for score64.
 cglobal decimate_score%1, 1,3
 %ifdef PIC
-    lea r10, [decimate_table4]
-    lea r11, [decimate_mask_table4]
-    %define table r10
-    %define mask_table r11
+    lea r4, [decimate_table4]
+    lea r5, [decimate_mask_table4]
+    %define table r4
+    %define mask_table r5
 %else
     %define table decimate_table4
     %define mask_table decimate_mask_table4
@@ -1015,10 +990,10 @@ DECIMATE4x4 16
 %macro DECIMATE8x8 0
 
 %ifdef ARCH_X86_64
-cglobal decimate_score64, 1,4
+cglobal decimate_score64, 1,5
 %ifdef PIC
-    lea r10, [decimate_table8]
-    %define table r10
+    lea r4, [decimate_table8]
+    %define table r4
 %else
     %define table decimate_table8
 %endif
@@ -1153,12 +1128,25 @@ DECIMATE8x8
     pmovmskb  %2, mm0
 %elif mmsize == 16
     movdqa   xmm0, [%3+ 0]
+%if %1 == 8
+    packssdw xmm0, [%3+16]
+    packsswb xmm0, xmm0
+%else
     movdqa   xmm1, [%3+32]
     packssdw xmm0, [%3+16]
     packssdw xmm1, [%3+48]
     packsswb xmm0, xmm1
+%endif
     pcmpeqb  xmm0, xmm2
     pmovmskb   %2, xmm0
+%elif %1 == 8
+    movq     mm0, [%3+ 0]
+    movq     mm1, [%3+16]
+    packssdw mm0, [%3+ 8]
+    packssdw mm1, [%3+24]
+    packsswb mm0, mm1
+    pcmpeqb  mm0, mm2
+    pmovmskb  %2, mm0
 %else
     movq     mm0, [%3+ 0]
     movq     mm1, [%3+16]
@@ -1194,11 +1182,38 @@ COEFF_LAST4
 INIT_MMX mmx2, lzcnt
 COEFF_LAST4
 
+%macro COEFF_LAST8 0
+cglobal coeff_last8, 1,3
+    pxor m2, m2
+    LAST_MASK 8, r1d, r0
+%if mmsize == 16
+    xor r1d, 0xffff
+    shr r1d, 8
+%else
+    xor r1d, 0xff
+%endif
+    BSR eax, r1d, 0x1f
+    RET
+%endmacro
+
+%ifndef ARCH_X86_64
+INIT_MMX mmx2
+COEFF_LAST8
+%endif
+INIT_XMM sse2
+COEFF_LAST8
+INIT_XMM sse2, lzcnt
+COEFF_LAST8
+
 %else ; !HIGH_BIT_DEPTH
 %macro LAST_MASK 3-4
+%if %1 <= 8
+    movq     mm0, [%3+ 0]
 %if %1 == 4
-    movq     mm0, [%3]
     packsswb mm0, mm0
+%else
+    packsswb mm0, [%3+ 8]
+%endif
     pcmpeqb  mm0, mm2
     pmovmskb  %2, mm0
 %elif mmsize == 16
@@ -1220,7 +1235,7 @@ COEFF_LAST4
 %endif
 %endmacro
 
-%macro COEFF_LAST4 0
+%macro COEFF_LAST48 0
 %ifdef ARCH_X86_64
 cglobal coeff_last4, 1,1
     BSR  rax, [r0], 0x3f
@@ -1239,12 +1254,19 @@ cglobal coeff_last4, 0,3
     lea   eax, [eax+ecx*2]
     RET
 %endif
+
+cglobal coeff_last8, 1,3
+    pxor m2, m2
+    LAST_MASK 8, r1d, r0, r2d
+    xor r1d, 0xff
+    BSR eax, r1d, 0x1f
+    RET
 %endmacro
 
 INIT_MMX mmx2
-COEFF_LAST4
+COEFF_LAST48
 INIT_MMX mmx2, lzcnt
-COEFF_LAST4
+COEFF_LAST48
 %endif ; HIGH_BIT_DEPTH
 
 %macro COEFF_LAST 0
@@ -1330,8 +1352,16 @@ cglobal coeff_level_run%1,0,7
     movifnidn t1, r1mp
     pxor    m2, m2
     LAST_MASK %1, t5d, t0-(%1&1)*SIZEOF_DCTCOEF, t4d
-    not    t5d
-    shl    t5d, 32-((%1+1)&~1)
+%if %1==15
+    shr   t5d, 1
+%elif %1==8
+    and   t5d, 0xff
+%elif %1==4
+    and   t5d, 0xf
+%endif
+    xor   t5d, (1<<%1)-1
+    mov   [t1+4], t5d
+    shl    t5d, 32-%1
     mov    t4d, %1-1
     LZCOUNT t3d, t5d, 0x1f
     xor    t6d, t6d
@@ -1343,12 +1373,12 @@ cglobal coeff_level_run%1,0,7
     LZCOUNT t3d, t5d, 0x1f
 %ifdef HIGH_BIT_DEPTH
     mov    t2d, [t0+t4*4]
-    mov   [t1+t6  +4+16*4], t3b
-    mov   [t1+t6*4+ 4], t2d
+    mov   [t1+t6+8+16*4], t3b
+    mov   [t1+t6*4+ 8], t2d
 %else
     mov    t2w, [t0+t4*2]
-    mov   [t1+t6  +4+16*2], t3b
-    mov   [t1+t6*2+ 4], t2w
+    mov   [t1+t6+8+16*2], t3b
+    mov   [t1+t6*2+ 8], t2w
 %endif
     inc    t3d
     shl    t5d, t3b
@@ -1364,11 +1394,19 @@ COEFF_LEVELRUN 15
 COEFF_LEVELRUN 16
 %endif
 COEFF_LEVELRUN 4
+COEFF_LEVELRUN 8
 INIT_XMM sse2
+%ifdef HIGH_BIT_DEPTH
+COEFF_LEVELRUN 8
+%endif
 COEFF_LEVELRUN 15
 COEFF_LEVELRUN 16
 INIT_XMM sse2, lzcnt
+%ifdef HIGH_BIT_DEPTH
+COEFF_LEVELRUN 8
+%endif
 COEFF_LEVELRUN 15
 COEFF_LEVELRUN 16
 INIT_MMX mmx2, lzcnt
 COEFF_LEVELRUN 4
+COEFF_LEVELRUN 8

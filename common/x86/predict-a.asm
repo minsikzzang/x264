@@ -34,6 +34,7 @@ pw_76543210:
 pw_3210:     dw 0, 1, 2, 3, 4, 5, 6, 7
 pw_43210123: dw -3, -2, -1, 0, 1, 2, 3, 4
 pw_m3:       times 8 dw -3
+pw_m7:       times 8 dw -7
 pb_00s_ff:   times 8 db 0
 pb_0s_ff:    times 7 db 0
              db 0xff
@@ -582,9 +583,9 @@ PREDICT_4x4_V1 b
 ;-----------------------------------------------------------------------------
 ; void predict_4x4_dc( pixel *src )
 ;-----------------------------------------------------------------------------
+INIT_MMX mmx2
 %ifdef HIGH_BIT_DEPTH
-INIT_MMX
-cglobal predict_4x4_dc_mmx2, 1,1
+cglobal predict_4x4_dc, 1,1
     mova   m2, [r0+0*FDEC_STRIDEB-4*SIZEOF_PIXEL]
     paddw  m2, [r0+1*FDEC_STRIDEB-4*SIZEOF_PIXEL]
     paddw  m2, [r0+2*FDEC_STRIDEB-4*SIZEOF_PIXEL]
@@ -603,8 +604,7 @@ cglobal predict_4x4_dc_mmx2, 1,1
     RET
 
 %else ; !HIGH_BIT_DEPTH
-INIT_MMX
-cglobal predict_4x4_dc_mmx2, 1,4
+cglobal predict_4x4_dc, 1,4
     pxor   mm7, mm7
     movd   mm0, [r0-FDEC_STRIDEB]
     psadbw mm0, mm7
@@ -669,6 +669,7 @@ cglobal predict_8x8_filter, 4,6,6
     add        t4d, r5d
     shr        t4d, 2
     mov         [t1+7*SIZEOF_PIXEL], t4%1
+    mov         [t1+6*SIZEOF_PIXEL], t4%1
     test       r3b, 2
     je .done
 .check_top:
@@ -797,8 +798,8 @@ PREDICT_8x8_H bw, W
 ; void predict_8x8_dc( pixel *src, pixel *edge );
 ;-----------------------------------------------------------------------------
 %ifdef HIGH_BIT_DEPTH
-INIT_XMM
-cglobal predict_8x8_dc_sse2, 2,2
+INIT_XMM sse2
+cglobal predict_8x8_dc, 2,2
     movu        m0, [r1+14]
     paddw       m0, [r1+32]
     HADDW       m0, m1
@@ -809,8 +810,8 @@ cglobal predict_8x8_dc_sse2, 2,2
     REP_RET
 
 %else ; !HIGH_BIT_DEPTH
-INIT_MMX
-cglobal predict_8x8_dc_mmx2, 2,2
+INIT_MMX mmx2
+cglobal predict_8x8_dc, 2,2
     pxor        mm0, mm0
     pxor        mm1, mm1
     psadbw      mm0, [r1+7]
@@ -839,9 +840,9 @@ cglobal %1, 2,2
     STORE8x8    m0, m0
     RET
 %endmacro
-INIT_XMM
-PREDICT_8x8_DC predict_8x8_dc_top_sse2 , 32, mova
-PREDICT_8x8_DC predict_8x8_dc_left_sse2, 14, movu
+INIT_XMM sse2
+PREDICT_8x8_DC predict_8x8_dc_top , 32, mova
+PREDICT_8x8_DC predict_8x8_dc_left, 14, movu
 
 %else ; !HIGH_BIT_DEPTH
 %macro PREDICT_8x8_DC 2
@@ -1079,36 +1080,42 @@ PREDICT_8x8_VR b
 ; void predict_8x8c_p_core( uint8_t *src, int i00, int b, int c )
 ;-----------------------------------------------------------------------------
 %ifndef ARCH_X86_64
-INIT_MMX
-cglobal predict_8x8c_p_core_mmx2, 1,2
+%ifndef HIGH_BIT_DEPTH
+%macro PREDICT_CHROMA_P_MMX 1
+cglobal predict_8x%1c_p_core, 1,2
     LOAD_PLANE_ARGS
-    movq        mm1, mm2
-    pmullw      mm2, [pw_3210]
-    psllw       mm1, 2
-    paddsw      mm0, mm2        ; mm0 = {i+0*b, i+1*b, i+2*b, i+3*b}
-    paddsw      mm1, mm0        ; mm1 = {i+4*b, i+5*b, i+6*b, i+7*b}
-
-    mov         r1d, 8
+    movq        m1, m2
+    pmullw      m2, [pw_3210]
+    psllw       m1, 2
+    paddsw      m0, m2        ; m0 = {i+0*b, i+1*b, i+2*b, i+3*b}
+    paddsw      m1, m0        ; m1 = {i+4*b, i+5*b, i+6*b, i+7*b}
+    mov         r1d, %1
 ALIGN 4
 .loop:
-    movq        mm5, mm0
-    movq        mm6, mm1
-    psraw       mm5, 5
-    psraw       mm6, 5
-    packuswb    mm5, mm6
-    movq        [r0], mm5
+    movq        m5, m0
+    movq        m6, m1
+    psraw       m5, 5
+    psraw       m6, 5
+    packuswb    m5, m6
+    movq        [r0], m5
 
-    paddsw      mm0, mm4
-    paddsw      mm1, mm4
+    paddsw      m0, m4
+    paddsw      m1, m4
     add         r0, FDEC_STRIDE
     dec         r1d
-    jg          .loop
+    jg .loop
     REP_RET
+%endmacro ; PREDICT_CHROMA_P_MMX
+
+INIT_MMX mmx2
+PREDICT_CHROMA_P_MMX 8
+PREDICT_CHROMA_P_MMX 16
+%endif ; !HIGH_BIT_DEPTH
 %endif ; !ARCH_X86_64
 
-INIT_XMM
+%macro PREDICT_CHROMA_P_XMM 1
 %ifdef HIGH_BIT_DEPTH
-cglobal predict_8x8c_p_core_sse2, 1,1,7
+cglobal predict_8x%1c_p_core, 1,2,7
     movd        m0, r1m
     movd        m2, r2m
     movd        m4, r3m
@@ -1118,9 +1125,13 @@ cglobal predict_8x8c_p_core_sse2, 1,1,7
     SPLATW      m2, m2, 0
     SPLATW      m4, m4, 0
     pmullw      m2, [pw_43210123] ; b
-    pmullw      m5, m4, [pw_m3]   ; c
+%if %1 == 16
+    pmullw      m5, m4, [pw_m7]   ; c
+%else
+    pmullw      m5, m4, [pw_m3]
+%endif
     paddw       m5, [pw_16]
-    mov        r1d, 8
+    mov        r1d, %1
 .loop:
     paddsw      m6, m2, m5
     paddsw      m6, m0
@@ -1129,11 +1140,11 @@ cglobal predict_8x8c_p_core_sse2, 1,1,7
     mova      [r0], m6
     paddw       m5, m4
     add         r0, FDEC_STRIDEB
-    dec r1d
+    dec        r1d
     jg .loop
     REP_RET
 %else ; !HIGH_BIT_DEPTH
-cglobal predict_8x8c_p_core_sse2, 1,1
+cglobal predict_8x%1c_p_core, 1,2
     movd        m0, r1m
     movd        m2, r2m
     movd        m4, r3m
@@ -1144,8 +1155,7 @@ cglobal predict_8x8c_p_core_sse2, 1,1
     paddsw      m0, m2            ; m0 = {i+0*b, i+1*b, i+2*b, i+3*b, i+4*b, i+5*b, i+6*b, i+7*b}
     paddsw      m3, m0, m4
     paddsw      m4, m4
-call .loop
-    add         r0, FDEC_STRIDE*4
+    mov         r1d, %1/4
 .loop:
     paddsw      m1, m3, m4
     paddsw      m5, m0, m4
@@ -1161,14 +1171,26 @@ call .loop
     packuswb    m5, m1
     movq        [r0+FDEC_STRIDE*2], m5
     movhps      [r0+FDEC_STRIDE*3], m5
+    add         r0, FDEC_STRIDE*4
+    dec        r1d
+    jg .loop
     RET
 %endif ; HIGH_BIT_DEPTH
+%endmacro ; PREDICT_CHROMA_P_XMM
+
+INIT_XMM sse2
+PREDICT_CHROMA_P_XMM 8
+PREDICT_CHROMA_P_XMM 16
+INIT_XMM avx
+PREDICT_CHROMA_P_XMM 8
+PREDICT_CHROMA_P_XMM 16
 
 ;-----------------------------------------------------------------------------
 ; void predict_16x16_p_core( uint8_t *src, int i00, int b, int c )
 ;-----------------------------------------------------------------------------
 %ifndef ARCH_X86_64
-cglobal predict_16x16_p_core_mmx2, 1,2
+INIT_MMX mmx2
+cglobal predict_16x16_p_core, 1,2
     LOAD_PLANE_ARGS
     movq        mm5, mm2
     movq        mm1, mm2
@@ -1400,6 +1422,51 @@ PREDICT_8x8
 %endif ; !HIGH_BIT_DEPTH
 
 ;-----------------------------------------------------------------------------
+; void predict_8x8_vl( pixel *src, pixel *edge )
+;-----------------------------------------------------------------------------
+%macro PREDICT_8x8_VL_10 1
+cglobal predict_8x8_vl, 2,2,8
+    mova         m0, [r1+16*SIZEOF_PIXEL]
+    mova         m1, [r1+24*SIZEOF_PIXEL]
+    PALIGNR      m2, m1, m0, SIZEOF_PIXEL*1, m4
+    PSRLPIX      m4, m1, 1
+    pavg%1       m6, m0, m2
+    pavg%1       m7, m1, m4
+    add          r0, FDEC_STRIDEB*4
+    mova         [r0-4*FDEC_STRIDEB], m6
+    PALIGNR      m3, m7, m6, SIZEOF_PIXEL*1, m5
+    mova         [r0-2*FDEC_STRIDEB], m3
+    PALIGNR      m3, m7, m6, SIZEOF_PIXEL*2, m5
+    mova         [r0+0*FDEC_STRIDEB], m3
+    PALIGNR      m7, m7, m6, SIZEOF_PIXEL*3, m5
+    mova         [r0+2*FDEC_STRIDEB], m7
+    PALIGNR      m3, m1, m0, SIZEOF_PIXEL*7, m6
+    PSLLPIX      m5, m0, 1
+    PRED8x8_LOWPASS m0, m5, m2, m0, m7
+    PRED8x8_LOWPASS m1, m3, m4, m1, m7
+    PALIGNR      m4, m1, m0, SIZEOF_PIXEL*1, m2
+    mova         [r0-3*FDEC_STRIDEB], m4
+    PALIGNR      m4, m1, m0, SIZEOF_PIXEL*2, m2
+    mova         [r0-1*FDEC_STRIDEB], m4
+    PALIGNR      m4, m1, m0, SIZEOF_PIXEL*3, m2
+    mova         [r0+1*FDEC_STRIDEB], m4
+    PALIGNR      m1, m1, m0, SIZEOF_PIXEL*4, m2
+    mova         [r0+3*FDEC_STRIDEB], m1
+    RET
+%endmacro
+%ifdef HIGH_BIT_DEPTH
+INIT_XMM sse2
+PREDICT_8x8_VL_10 w
+INIT_XMM ssse3
+PREDICT_8x8_VL_10 w
+INIT_XMM avx
+PREDICT_8x8_VL_10 w
+%else
+INIT_MMX mmx2
+PREDICT_8x8_VL_10 b
+%endif
+
+;-----------------------------------------------------------------------------
 ; void predict_8x8_hd( pixel *src, pixel *edge )
 ;-----------------------------------------------------------------------------
 %macro PREDICT_8x8_HD 2
@@ -1611,7 +1678,6 @@ PREDICT_8x16C_V
 ;-----------------------------------------------------------------------------
 %ifdef HIGH_BIT_DEPTH
 
-INIT_XMM sse2
 %macro PREDICT_C_H 1
 cglobal predict_8x%1c_h, 1,1
     add        r0, FDEC_STRIDEB*4
@@ -1620,11 +1686,18 @@ cglobal predict_8x%1c_h, 1,1
     movd       m0, [r0+FDEC_STRIDEB*Y-SIZEOF_PIXEL*2]
     SPLATW     m0, m0, 1
     mova [r0+FDEC_STRIDEB*Y], m0
+%if mmsize == 8
+    mova [r0+FDEC_STRIDEB*Y+8], m0
+%endif
 %assign Y Y+1
 %endrep
     RET
 %endmacro
 
+INIT_MMX mmx2
+PREDICT_C_H 8
+PREDICT_C_H 16
+INIT_XMM sse2
 PREDICT_C_H 8
 PREDICT_C_H 16
 
@@ -1668,6 +1741,16 @@ PREDICT_C_H 16
 ; void predict_8x8c_dc( pixel *src )
 ;-----------------------------------------------------------------------------
 
+%macro LOAD_LEFT 1
+    movzx    r1d, pixel [r0+FDEC_STRIDEB*(%1-4)-SIZEOF_PIXEL]
+    movzx    r2d, pixel [r0+FDEC_STRIDEB*(%1-3)-SIZEOF_PIXEL]
+    add      r1d, r2d
+    movzx    r2d, pixel [r0+FDEC_STRIDEB*(%1-2)-SIZEOF_PIXEL]
+    add      r1d, r2d
+    movzx    r2d, pixel [r0+FDEC_STRIDEB*(%1-1)-SIZEOF_PIXEL]
+    add      r1d, r2d
+%endmacro
+
 %macro PREDICT_8x8C_DC 0
 cglobal predict_8x8c_dc, 1,3
     pxor      m7, m7
@@ -1684,23 +1767,10 @@ cglobal predict_8x8c_dc, 1,3
 %endif
     add       r0, FDEC_STRIDEB*4
 
-    movzx    r1d, pixel [r0-FDEC_STRIDEB*4-SIZEOF_PIXEL]
-    movzx    r2d, pixel [r0-FDEC_STRIDEB*3-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movzx    r2d, pixel [r0-FDEC_STRIDEB*2-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movzx    r2d, pixel [r0-FDEC_STRIDEB*1-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movd      m2, r1d            ; s2
-
-    movzx    r1d, pixel [r0+FDEC_STRIDEB*0-SIZEOF_PIXEL]
-    movzx    r2d, pixel [r0+FDEC_STRIDEB*1-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movzx    r2d, pixel [r0+FDEC_STRIDEB*2-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movzx    r2d, pixel [r0+FDEC_STRIDEB*3-SIZEOF_PIXEL]
-    add      r1d, r2d
-    movd      m3, r1d            ; s3
+    LOAD_LEFT 0                 ; s2
+    movd      m2, r1d
+    LOAD_LEFT 4                 ; s3
+    movd      m3, r1d
 
     punpcklwd m0, m1
     punpcklwd m2, m3
@@ -1757,6 +1827,124 @@ PREDICT_8x8C_DC
 %ifdef HIGH_BIT_DEPTH
 INIT_MMX sse2
 PREDICT_8x8C_DC
+%endif
+
+%ifdef HIGH_BIT_DEPTH
+%macro STORE_4LINES 3
+%if cpuflag(sse2)
+    movdqa [r0+FDEC_STRIDEB*(%3-4)], %1
+    movdqa [r0+FDEC_STRIDEB*(%3-3)], %1
+    movdqa [r0+FDEC_STRIDEB*(%3-2)], %1
+    movdqa [r0+FDEC_STRIDEB*(%3-1)], %1
+%else
+    movq [r0+FDEC_STRIDEB*(%3-4)+0], %1
+    movq [r0+FDEC_STRIDEB*(%3-4)+8], %2
+    movq [r0+FDEC_STRIDEB*(%3-3)+0], %1
+    movq [r0+FDEC_STRIDEB*(%3-3)+8], %2
+    movq [r0+FDEC_STRIDEB*(%3-2)+0], %1
+    movq [r0+FDEC_STRIDEB*(%3-2)+8], %2
+    movq [r0+FDEC_STRIDEB*(%3-1)+0], %1
+    movq [r0+FDEC_STRIDEB*(%3-1)+8], %2
+%endif
+%endmacro
+%else
+%macro STORE_4LINES 2
+    movq [r0+FDEC_STRIDEB*(%2-4)], %1
+    movq [r0+FDEC_STRIDEB*(%2-3)], %1
+    movq [r0+FDEC_STRIDEB*(%2-2)], %1
+    movq [r0+FDEC_STRIDEB*(%2-1)], %1
+%endmacro
+%endif
+
+%macro PREDICT_8x16C_DC 0
+cglobal predict_8x16c_dc, 1,3
+    pxor      m7, m7
+%ifdef HIGH_BIT_DEPTH
+    movq      m0, [r0-FDEC_STRIDEB+0]
+    movq      m1, [r0-FDEC_STRIDEB+8]
+    HADDW     m0, m2
+    HADDW     m1, m2
+%else
+    movd      m0, [r0-FDEC_STRIDEB+0]
+    movd      m1, [r0-FDEC_STRIDEB+4]
+    psadbw    m0, m7            ; s0
+    psadbw    m1, m7            ; s1
+%endif
+    punpcklwd m0, m1            ; s0, s1
+
+    add       r0, FDEC_STRIDEB*4
+    LOAD_LEFT 0                 ; s2
+    pinsrw    m0, r1d, 2
+    LOAD_LEFT 4                 ; s3
+    pinsrw    m0, r1d, 3        ; s0, s1, s2, s3
+    add       r0, FDEC_STRIDEB*8
+    LOAD_LEFT 0                 ; s4
+    pinsrw    m1, r1d, 2
+    LOAD_LEFT 4                 ; s5
+    pinsrw    m1, r1d, 3        ; s1, __, s4, s5
+    sub       r0, FDEC_STRIDEB*8
+
+    pshufw    m2, m0, q1310     ; s0, s1, s3, s1
+    pshufw    m0, m0, q3312     ; s2, s1, s3, s3
+    pshufw    m3, m1, q0302     ; s4, s1, s5, s1
+    pshufw    m1, m1, q3322     ; s4, s4, s5, s5
+    paddw     m0, m2
+    paddw     m1, m3
+    psrlw     m0, 2
+    psrlw     m1, 2
+    pavgw     m0, m7
+    pavgw     m1, m7
+%ifdef HIGH_BIT_DEPTH
+%if cpuflag(sse2)
+    movq2dq xmm0, m0
+    movq2dq xmm1, m1
+    punpcklwd xmm0, xmm0
+    punpcklwd xmm1, xmm1
+    pshufd    xmm2, xmm0, q3322
+    pshufd    xmm3, xmm1, q3322
+    punpckldq xmm0, xmm0
+    punpckldq xmm1, xmm1
+    STORE_4LINES xmm0, xmm0, 0
+    STORE_4LINES xmm2, xmm2, 4
+    STORE_4LINES xmm1, xmm1, 8
+    STORE_4LINES xmm3, xmm3, 12
+%else
+    pshufw    m2, m0, q0000
+    pshufw    m3, m0, q1111
+    pshufw    m4, m0, q2222
+    pshufw    m5, m0, q3333
+    STORE_4LINES m2, m3, 0
+    STORE_4LINES m4, m5, 4
+    pshufw    m2, m1, q0000
+    pshufw    m3, m1, q1111
+    pshufw    m4, m1, q2222
+    pshufw    m5, m1, q3333
+    STORE_4LINES m2, m3, 8
+    STORE_4LINES m4, m5, 12
+%endif
+%else
+    packuswb  m0, m0            ; dc0, dc1, dc2, dc3
+    packuswb  m1, m1            ; dc4, dc5, dc6, dc7
+    punpcklbw m0, m0
+    punpcklbw m1, m1
+    pshufw    m2, m0, q1100
+    pshufw    m3, m0, q3322
+    pshufw    m4, m1, q1100
+    pshufw    m5, m1, q3322
+    STORE_4LINES m2, 0
+    STORE_4LINES m3, 4
+    add       r0, FDEC_STRIDEB*8
+    STORE_4LINES m4, 0
+    STORE_4LINES m5, 4
+%endif
+    RET
+%endmacro
+
+INIT_MMX mmx2
+PREDICT_8x16C_DC
+%ifdef HIGH_BIT_DEPTH
+INIT_MMX sse2
+PREDICT_8x16C_DC
 %endif
 
 %macro PREDICT_C_DC_TOP 1
@@ -1912,8 +2100,8 @@ PREDICT_16x16_H
 %endif
 %endmacro
 
-INIT_MMX
-cglobal predict_16x16_dc_core_mmx2, 1,2
+INIT_MMX mmx2
+cglobal predict_16x16_dc_core, 1,2
 %ifdef ARCH_X86_64
     movd         m6, r1d
     PRED16x16_DC m6, 5
@@ -1922,20 +2110,20 @@ cglobal predict_16x16_dc_core_mmx2, 1,2
 %endif
     REP_RET
 
-INIT_MMX
-cglobal predict_16x16_dc_top_mmx2, 1,2
+INIT_MMX mmx2
+cglobal predict_16x16_dc_top, 1,2
     PRED16x16_DC [pw_8], 4
     REP_RET
 
-INIT_MMX
+INIT_MMX mmx2
 %ifdef HIGH_BIT_DEPTH
-cglobal predict_16x16_dc_left_core_mmx2, 1,2
+cglobal predict_16x16_dc_left_core, 1,2
     movd       m0, r1m
     SPLATW     m0, m0
     STORE16x16 m0, m0, m0, m0
     REP_RET
 %else ; !HIGH_BIT_DEPTH
-cglobal predict_16x16_dc_left_core_mmx2, 1,1
+cglobal predict_16x16_dc_left_core, 1,1
     movd       m0, r1m
     pshufw     m0, m0, 0
     packuswb   m0, m0
@@ -1969,25 +2157,25 @@ cglobal predict_16x16_dc_left_core_mmx2, 1,1
 %endif
 %endmacro
 
-INIT_XMM
-cglobal predict_16x16_dc_core_sse2, 2,2,4
+INIT_XMM sse2
+cglobal predict_16x16_dc_core, 2,2,4
     movd       m3, r1m
     PRED16x16_DC_SSE2 m3, 5
     REP_RET
 
-cglobal predict_16x16_dc_top_sse2, 1,2
+cglobal predict_16x16_dc_top, 1,2
     PRED16x16_DC_SSE2 [pw_8], 4
     REP_RET
 
-INIT_XMM
+INIT_XMM sse2
 %ifdef HIGH_BIT_DEPTH
-cglobal predict_16x16_dc_left_core_sse2, 1,2
+cglobal predict_16x16_dc_left_core, 1,2
     movd       m0, r1m
     SPLATW     m0, m0
     STORE16x16_SSE2 m0, m0
     REP_RET
 %else ; !HIGH_BIT_DEPTH
-cglobal predict_16x16_dc_left_core_sse2, 1,1
+cglobal predict_16x16_dc_left_core, 1,1
     movd       m0, r1m
     SPLATW     m0, m0
     packuswb   m0, m0

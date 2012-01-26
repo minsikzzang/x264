@@ -29,19 +29,6 @@
 %include "x86inc.asm"
 %include "x86util.asm"
 
-SECTION_RODATA
-
-h4x4_pred_shuf: db 3,3,3,3,7,7,7,7,11,11,11,11,15,15,15,15
-h4x4_pred_shuf2: db 3,7,11,15,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
-h8x8_pred_shuf: times 8 db 1
-                times 8 db 0
-                times 8 db 3
-                times 8 db 2
-                times 8 db 5
-                times 8 db 4
-                times 8 db 7
-                times 8 db 6
-
 SECTION .text
 
 cextern pb_3
@@ -255,11 +242,7 @@ SAD_W16
     psadbw  m1, m3
     psadbw  m2, m4
     lea     r2, [r2+2*r3]
-%if %1
-    paddw   m0, m1
-%else
-    SWAP     0, 1
-%endif
+    ACCUM paddw, 0, 1, %1
     paddw   m0, m2
 %endmacro
 
@@ -300,10 +283,11 @@ cglobal pixel_vsad_mmx2, 3,3
     psadbw    m3, m5
     psadbw    m4, m6
     psadbw    m5, m7
-    paddw     m0, m2
-    paddw     m0, m3
-    paddw     m0, m4
-    paddw     m0, m5
+    ;max sum: 31*16*255(pixel_max)=126480
+    paddd     m0, m2
+    paddd     m0, m3
+    paddd     m0, m4
+    paddd     m0, m5
     mova      m2, m6
     mova      m3, m7
     sub      r2d, 2
@@ -334,7 +318,8 @@ cglobal pixel_vsad_sse2, 3,3
     jg .loop
 .end:
     movhlps   m1, m0
-    paddw     m0, m1
+    ;max sum: 31*16*255(pixel_max)=126480
+    paddd     m0, m1
     movd     eax, m0
     RET
 
@@ -385,45 +370,6 @@ cglobal intra_sad_x3_4x4_mmx2, 3,3
     movd   [r2+4], mm1 ;H prediction cost
     RET
 
-%macro INTRA_SADx3_4x4 0
-cglobal intra_sad_x3_4x4, 3,3
-    movd       xmm4, [r1+FDEC_STRIDE*0-4]
-    pinsrd     xmm4, [r1+FDEC_STRIDE*1-4], 1
-    pinsrd     xmm4, [r1+FDEC_STRIDE*2-4], 2
-    pinsrd     xmm4, [r1+FDEC_STRIDE*3-4], 3
-    movd       xmm2, [r1-FDEC_STRIDE]
-    pxor       xmm3, xmm3
-    pshufb     xmm5, xmm4, [h4x4_pred_shuf] ; EEEEFFFFGGGGHHHH
-    pshufb     xmm4, [h4x4_pred_shuf2]      ; EFGH
-    pshufd     xmm0, xmm2, 0                ; ABCDABCDABCDABCD
-    punpckldq  xmm2, xmm4                   ; ABCDEFGH
-    psadbw     xmm2, xmm3
-    movd       xmm1, [r0+FENC_STRIDE*0]
-    pinsrd     xmm1, [r0+FENC_STRIDE*1], 1
-    pinsrd     xmm1, [r0+FENC_STRIDE*2], 2
-    pinsrd     xmm1, [r0+FENC_STRIDE*3], 3
-    psadbw     xmm0, xmm1
-    psadbw     xmm5, xmm1
-    psraw      xmm2, 2
-    pavgw      xmm2, xmm3
-    pshufb     xmm2, xmm3              ; DC prediction
-    punpckhqdq xmm3, xmm0, xmm5
-    punpcklqdq xmm0, xmm5
-    psadbw     xmm2, xmm1
-    paddw      xmm0, xmm3
-    movhlps    xmm4, xmm2
-    packusdw   xmm0, xmm0
-    paddw      xmm2, xmm4
-    movq       [r2], xmm0              ; V/H prediction costs
-    movd     [r2+8], xmm2              ; DC prediction cost
-    RET
-%endmacro ; INTRA_SADx3_4x4
-
-INIT_XMM sse4
-INTRA_SADx3_4x4
-INIT_XMM avx
-INTRA_SADx3_4x4
-
 ;-----------------------------------------------------------------------------
 ; void intra_sad_x3_8x8( uint8_t *fenc, uint8_t edge[36], int res[3]);
 ;-----------------------------------------------------------------------------
@@ -441,25 +387,13 @@ INTRA_SADx3_4x4
     movq      m5, [r0+FENC_STRIDE*%1]
     movq      m4, m5
     psadbw    m4, m0
-%if %1
-    paddw     m1, m4
-%else
-    SWAP       1, 4
-%endif
+    ACCUM  paddw, 1, 4, %1
     movq      m4, m5
     psadbw    m4, m6
-%if %1
-    paddw     m2, m4
-%else
-    SWAP       2, 4
-%endif
+    ACCUM  paddw, 2, 4, %1
     pshufw    m4, m7, %2
     psadbw    m5, m4
-%if %1
-    paddw     m3, m5
-%else
-    SWAP       3, 5
-%endif
+    ACCUM  paddw, 3, 5, %1
 %endmacro
 
 INIT_MMX
@@ -491,69 +425,6 @@ cglobal intra_sad_x3_8x8_mmx2, 3,3
     movd  [r2+8], m1
     RET
 
-%macro INTRA_SADx3_8x8 0
-cglobal intra_sad_x3_8x8, 3,4,9
-%ifdef PIC
-    lea        r11, [h8x8_pred_shuf]
-%define shuf r11
-%else
-%define shuf h8x8_pred_shuf
-%endif
-    movq       m0, [r1+7]   ; left pixels
-    movq       m1, [r1+16]  ; top pixels
-    pxor       m2, m2
-    pxor       m3, m3
-    psadbw     m2, m0
-    psadbw     m3, m1
-    paddw      m2, m3
-    pxor       m3, m3       ; V score accumulator
-    psraw      m2, 3
-    pavgw      m2, m3
-    punpcklqdq m1, m1       ; V prediction
-    pshufb     m2, m3       ; DC prediction
-    pxor       m4, m4       ; H score accumulator
-    pxor       m5, m5       ; DC score accumulator
-    mov       r3d, 6
-.loop:
-    movq        m6, [r0+FENC_STRIDE*0]
-    movhps      m6, [r0+FENC_STRIDE*1]
-    pshufb      m7, m0, [shuf+r3*8] ; H prediction
-%ifdef ARCH_X86_64
-    psadbw      m7, m6
-    psadbw      m8, m1, m6
-    psadbw      m6, m2
-    paddw       m4, m7
-    paddw       m3, m8
-    paddw       m5, m6
-%else
-    psadbw      m7, m6
-    paddw       m4, m7
-    psadbw      m7, m1, m6
-    psadbw      m6, m2
-    paddw       m3, m7
-    paddw       m5, m6
-%endif
-    add         r0, FENC_STRIDE*2
-    sub        r3d, 2
-    jge .loop
-
-    movhlps     m0, m3
-    movhlps     m1, m4
-    movhlps     m2, m5
-    paddw       m3, m0
-    paddw       m4, m1
-    paddw       m5, m2
-    movd    [r2+0], m3
-    movd    [r2+4], m4
-    movd    [r2+8], m5
-    RET
-%endmacro ; INTRA_SADx3_8x8
-
-INIT_XMM ssse3
-INTRA_SADx3_8x8
-INIT_XMM avx
-INTRA_SADx3_8x8
-
 ;-----------------------------------------------------------------------------
 ; void intra_sad_x3_8x8c( uint8_t *fenc, uint8_t *fdec, int res[3] );
 ;-----------------------------------------------------------------------------
@@ -580,13 +451,8 @@ INTRA_SADx3_8x8
     psadbw      m5, m6
     paddw       m1, m3
     paddw       m4, m5
-%if %1
-    paddw       m0, m1
-    paddw       m2, m4
-%else
-    SWAP 0,1
-    SWAP 2,4
-%endif
+    ACCUM    paddw, 0, 1, %1
+    ACCUM    paddw, 2, 4, %1
 %endmacro
 
 %macro INTRA_SAD_8x8C 0
@@ -1551,7 +1417,7 @@ cglobal pixel_sad_x3_%1x%2_cache%3_%6
     jmp pixel_sad_x3_%1x%2_%4
 .split:
 %ifdef ARCH_X86_64
-    PROLOGUE 6,7
+    PROLOGUE 6,9
 %ifdef WIN64
     movsxd r4, r4d
     sub  rsp, 8
@@ -1561,26 +1427,26 @@ cglobal pixel_sad_x3_%1x%2_cache%3_%6
     mov  r2, r1
     mov  r1, FENC_STRIDE
     mov  r3, r4
-    mov  r10, r0
-    mov  r11, r5
+    mov  r7, r0
+    mov  r8, r5
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11], eax
+    mov  [r8], eax
 %ifdef WIN64
     mov  r2, [rsp]
 %else
     pop  r2
 %endif
-    mov  r0, r10
+    mov  r0, r7
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11+4], eax
+    mov  [r8+4], eax
 %ifdef WIN64
     mov  r2, [rsp+8]
 %else
     pop  r2
 %endif
-    mov  r0, r10
+    mov  r0, r7
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11+8], eax
+    mov  [r8+8], eax
 %ifdef WIN64
     add  rsp, 24
 %endif
@@ -1617,8 +1483,8 @@ cglobal pixel_sad_x4_%1x%2_cache%3_%6
     jmp pixel_sad_x4_%1x%2_%4
 .split:
 %ifdef ARCH_X86_64
-    PROLOGUE 6,7
-    mov  r11,  r6mp
+    PROLOGUE 6,9
+    mov  r8,  r6mp
 %ifdef WIN64
     movsxd r5, r5d
 %endif
@@ -1628,33 +1494,33 @@ cglobal pixel_sad_x4_%1x%2_cache%3_%6
     mov  r2, r1
     mov  r1, FENC_STRIDE
     mov  r3, r5
-    mov  r10, r0
+    mov  r7, r0
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11], eax
+    mov  [r8], eax
 %ifdef WIN64
     mov  r2, [rsp]
 %else
     pop  r2
 %endif
-    mov  r0, r10
+    mov  r0, r7
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11+4], eax
+    mov  [r8+4], eax
 %ifdef WIN64
     mov  r2, [rsp+8]
 %else
     pop  r2
 %endif
-    mov  r0, r10
+    mov  r0, r7
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11+8], eax
+    mov  [r8+8], eax
 %ifdef WIN64
     mov  r2, [rsp+16]
 %else
     pop  r2
 %endif
-    mov  r0, r10
+    mov  r0, r7
     call pixel_sad_%1x%2_cache%3_%5
-    mov  [r11+12], eax
+    mov  [r8+12], eax
 %ifdef WIN64
     add  rsp, 24
 %endif

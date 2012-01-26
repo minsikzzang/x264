@@ -58,13 +58,16 @@ cextern pd_32
 ; implicit weighted biprediction
 ;=============================================================================
 ; assumes log2_denom = 5, offset = 0, weight1 + weight2 = 64
-%ifdef ARCH_X86_64
-    DECLARE_REG_TMP 0,1,2,3,4,5,10,11
-    %macro AVG_START 0-1 0
-        PROLOGUE 6,7,%1
 %ifdef WIN64
-        movsxd r5, r5d
-%endif
+    DECLARE_REG_TMP 0,1,2,3,4,5,4,5
+    %macro AVG_START 0-1 0
+        PROLOGUE 5,7,%1
+        movsxd r5, dword r5m
+    %endmacro
+%elifdef UNIX64
+    DECLARE_REG_TMP 0,1,2,3,4,5,7,8
+    %macro AVG_START 0-1 0
+        PROLOGUE 6,9,%1
     %endmacro
 %else
     DECLARE_REG_TMP 1,2,3,4,5,6,1,2
@@ -1157,7 +1160,9 @@ avg_w16_align%1_%2_ssse3:
     jg     avg_w16_align%1_%2_ssse3
     ret
 %if %1==0
-    times 13 db 0x90 ; make sure the first ones don't end up short
+    ; make sure the first ones don't end up short
+    ALIGN 16
+    times (48-($-avg_w16_align%1_%2_ssse3))>>4 nop
 %endif
 %endmacro
 
@@ -1171,7 +1176,7 @@ cglobal pixel_avg2_w16_cache64_ssse3
     and   eax, 7
     jz x264_pixel_avg2_w16_sse2
 %endif
-    PROLOGUE 6, 7
+    PROLOGUE 6, 8
     lea    r6, [r4+r2]
     and    r4, ~0xf
     and    r6, 0x1f
@@ -1181,8 +1186,8 @@ cglobal pixel_avg2_w16_cache64_ssse3
     shl    r6, 4         ;jump = (offset + align*2)*48
 %define avg_w16_addr avg_w16_align1_1_ssse3-(avg_w16_align2_2_ssse3-avg_w16_align1_1_ssse3)
 %ifdef PIC
-    lea   r11, [avg_w16_addr]
-    add    r6, r11
+    lea    r7, [avg_w16_addr]
+    add    r6, r7
 %else
     lea    r6, [avg_w16_addr + r6]
 %endif
@@ -1302,9 +1307,10 @@ MC_COPY 16
 ; void prefetch_fenc( pixel *pix_y, int stride_y,
 ;                     pixel *pix_uv, int stride_uv, int mb_x )
 ;-----------------------------------------------------------------------------
-INIT_MMX
+
+%macro PREFETCH_FENC 1
 %ifdef ARCH_X86_64
-cglobal prefetch_fenc_mmx2, 5,5
+cglobal prefetch_fenc_%1, 5,5
     FIX_STRIDES r1d, r3d
     and    r4d, 3
     mov    eax, r4d
@@ -1320,10 +1326,15 @@ cglobal prefetch_fenc_mmx2, 5,5
     lea    r2,  [r2+rax*2+64*SIZEOF_PIXEL]
     prefetcht0  [r2]
     prefetcht0  [r2+r3]
+%ifidn %1, 422
+    lea    r2,  [r2+r3*2]
+    prefetcht0  [r2]
+    prefetcht0  [r2+r3]
+%endif
     RET
 
 %else
-cglobal prefetch_fenc_mmx2, 0,3
+cglobal prefetch_fenc_%1, 0,3
     mov    r2, r4m
     mov    r1, r1m
     mov    r0, r0m
@@ -1346,13 +1357,24 @@ cglobal prefetch_fenc_mmx2, 0,3
     lea    r0, [r0+r2*2+64*SIZEOF_PIXEL]
     prefetcht0 [r0]
     prefetcht0 [r0+r1]
+%ifidn %1, 422
+    lea    r0,  [r0+r1*2]
+    prefetcht0  [r0]
+    prefetcht0  [r0+r1]
+%endif
     ret
 %endif ; ARCH_X86_64
+%endmacro
+
+INIT_MMX mmx2
+PREFETCH_FENC 420
+PREFETCH_FENC 422
 
 ;-----------------------------------------------------------------------------
 ; void prefetch_ref( pixel *pix, int stride, int parity )
 ;-----------------------------------------------------------------------------
-cglobal prefetch_ref_mmx2, 3,3
+INIT_MMX mmx2
+cglobal prefetch_ref, 3,3
     FIX_STRIDES r1d
     dec    r2d
     and    r2d, r1d
@@ -1376,17 +1398,22 @@ cglobal prefetch_ref_mmx2, 3,3
 ;=============================================================================
 
 %ifdef ARCH_X86_64
-    DECLARE_REG_TMP 10,11,6
+    DECLARE_REG_TMP 6,7,8
 %else
     DECLARE_REG_TMP 0,1,2
 %endif
 
-%macro MC_CHROMA_START 0
+%macro MC_CHROMA_START 1
+%ifdef ARCH_X86_64
+    PROLOGUE 0,9,%1
+%else
+    PROLOGUE 0,6,%1
+%endif
     movifnidn r3,  r3mp
     movifnidn r4d, r4m
     movifnidn r5d, r5m
-    movifnidn t2d, r6m
-    mov       t0d, t2d
+    movifnidn t0d, r6m
+    mov       t2d, t0d
     mov       t1d, r5d
     sar       t0d, 3
     sar       t1d, 3
@@ -1430,8 +1457,8 @@ cglobal prefetch_ref_mmx2, 3,3
 ;                 int width, int height )
 ;-----------------------------------------------------------------------------
 %macro MC_CHROMA 0
-cglobal mc_chroma, 0,6
-    MC_CHROMA_START
+cglobal mc_chroma
+    MC_CHROMA_START 0
     FIX_STRIDES r4
     and       r5d, 7
 %ifdef ARCH_X86_64
@@ -1709,8 +1736,8 @@ ALIGN 4
     movifnidn r5d, r8m
     cmp dword r7m, 4
     jg .mc1d_w8
-    mov       r10, r2
-    mov       r11, r4
+    mov        r7, r2
+    mov        r8, r4
 %if mmsize!=8
     shr       r5d, 1
 %endif
@@ -1724,7 +1751,7 @@ ALIGN 4
 %else
     movu       m0, [r3]
     movu       m1, [r3+r6]
-    add        r3, r11
+    add        r3, r8
     movu       m2, [r3]
     movu       m3, [r3+r6]
 %endif
@@ -1740,7 +1767,7 @@ ALIGN 4
     movq       m0, [r3]
     movq       m1, [r3+r6]
 %if mmsize!=8
-    add        r3, r11
+    add        r3, r8
     movhps     m0, [r3]
     movhps     m1, [r3+r6]
 %endif
@@ -1761,22 +1788,22 @@ ALIGN 4
     psrlw      m2, 3
 %ifdef HIGH_BIT_DEPTH
 %if mmsize == 8
-    xchg       r4, r11
-    xchg       r2, r10
+    xchg       r4, r8
+    xchg       r2, r7
 %endif
     movq     [r0], m0
     movq     [r1], m2
 %if mmsize == 16
-    add        r0, r10
-    add        r1, r10
+    add        r0, r7
+    add        r1, r7
     movhps   [r0], m0
     movhps   [r1], m2
 %endif
 %else ; !HIGH_BIT_DEPTH
     packuswb   m0, m2
 %if mmsize==8
-    xchg       r4, r11
-    xchg       r2, r10
+    xchg       r4, r8
+    xchg       r2, r7
     movd     [r0], m0
     psrlq      m0, 32
     movd     [r1], m0
@@ -1784,8 +1811,8 @@ ALIGN 4
     movhlps    m1, m0
     movd     [r0], m0
     movd     [r1], m1
-    add        r0, r10
-    add        r1, r10
+    add        r0, r7
+    add        r1, r7
     psrldq     m0, 4
     psrldq     m1, 4
     movd     [r0], m0
@@ -1801,8 +1828,8 @@ ALIGN 4
 .mc1d_w8:
     sub       r2, 4*SIZEOF_PIXEL
     sub       r4, 8*SIZEOF_PIXEL
-    mov      r10, 4*SIZEOF_PIXEL
-    mov      r11, 8*SIZEOF_PIXEL
+    mov       r7, 4*SIZEOF_PIXEL
+    mov       r8, 8*SIZEOF_PIXEL
 %if mmsize==8
     shl       r5d, 1
 %endif
@@ -1810,10 +1837,9 @@ ALIGN 4
 %endif ; ARCH_X86_64
 %endmacro ; MC_CHROMA
 
-
 %macro MC_CHROMA_SSSE3 0
-cglobal mc_chroma, 0,6,9
-    MC_CHROMA_START
+cglobal mc_chroma
+    MC_CHROMA_START 9
     and       r5d, 7
     and       t2d, 7
     mov       t0d, r5d
